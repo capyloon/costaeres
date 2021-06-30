@@ -404,5 +404,19 @@ mod tests {
 
         // And now add the leaf.
         manager.create(&leaf_meta, Box::new(&CONTENT[..])).await.unwrap();
+
+        // Try to update the leaf to a non-existent parent.
+        let leaf_meta = ObjectMetadata::new(
+            1.into(),
+            2.into(),
+            ObjectKind::Leaf,
+            10,
+            "leaf 1",
+            "text/plain",
+            None,
+        );
+        let res = manager.create(&leaf_meta, Box::new(&CONTENT[..])).await;
+        assert_eq!(res, Err(ObjectStoreError::InvalidContainerId));
+
     }
 }
