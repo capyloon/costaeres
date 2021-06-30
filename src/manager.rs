@@ -14,8 +14,8 @@ use crate::config::Config;
 use async_std::{fs::File, io::Read};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use log::error;
-use sqlx::SqlitePool;
+use log::{debug, error};
+use sqlx::{Sqlite, SqlitePool, Transaction};
 
 pub struct Manager {
     db_pool: SqlitePool,
@@ -35,23 +35,15 @@ impl Manager {
             .await
             .map_err(|err| error!("Failed to run migration: {}", err))?;
 
-        Ok(Manager {
-            db_pool,
-            store,
-        })
+        Ok(Manager { db_pool, store })
     }
-}
 
-#[async_trait(?Send)]
-impl ObjectStore for Manager {
-    async fn create(
+    // Use a existing transation to run the sql commands needed to create a metadata record.
+    async fn create_metadata<'c>(
         &self,
         metadata: &ObjectMetadata,
-        content: Box<dyn Read + Unpin>,
-    ) -> Result<(), ObjectStoreError> {
-        // Start a transaction to store the new metadata.
-        let mut tx = self.db_pool.begin().await?;
-
+        mut tx: Transaction<'c, Sqlite>,
+    ) -> Result<Transaction<'c, Sqlite>, ObjectStoreError> {
         let id = metadata.id();
         let parent = metadata.parent();
         let kind = metadata.kind();
@@ -87,10 +79,33 @@ impl ObjectStore for Manager {
             }
         }
 
+        Ok(tx)
+    }
+
+    pub async fn has_object(&self, id: ObjectId) -> Result<bool, ObjectStoreError> {
+        let count = sqlx::query_scalar!("SELECT count(*) FROM objects WHERE id = ?", id)
+            .fetch_one(&self.db_pool)
+            .await?;
+
+        Ok(count == 1)
+    }
+}
+
+#[async_trait(?Send)]
+impl ObjectStore for Manager {
+    async fn create(
+        &self,
+        metadata: &ObjectMetadata,
+        content: Box<dyn Read + Unpin>,
+    ) -> Result<(), ObjectStoreError> {
+        // Start a transaction to store the new metadata.
+        let tx = self.db_pool.begin().await?;
+        let tx2 = self.create_metadata(metadata, tx).await?;
+
         // Create the store entry, and commit the SQlite transaction in case of success.
         match self.store.create(metadata, content).await {
             Ok(_) => {
-                tx.commit().await?;
+                tx2.commit().await?;
                 Ok(())
             }
             Err(err) => Err(err),
@@ -108,43 +123,11 @@ impl ObjectStore for Manager {
             .execute(&mut tx)
             .await?;
 
-        let parent = metadata.parent();
-        let kind = metadata.kind();
-        let name = metadata.name();
-        let mime_type = metadata.mime_type();
-        let size = metadata.size() as i64;
-        let created = metadata.created();
-        let modified = metadata.modified();
-        let _ = sqlx::query!(
-            r#"
-    INSERT INTO objects ( id, parent, kind, name, mimeType, size, created, modified )
-    VALUES ( ?1, ?2, ?3, ?4, ?5,?6, ?7, ?8 )
-            "#,
-            id,
-            parent,
-            kind,
-            name,
-            mime_type,
-            size,
-            created,
-            modified,
-        )
-        .execute(&mut tx)
-        .await?
-        .last_insert_rowid();
-
-        // Insert the tags.
-        if let Some(tags) = metadata.tags() {
-            for tag in tags {
-                sqlx::query!("INSERT INTO tags ( id, tag ) VALUES ( ?1, ?2 )", id, tag)
-                    .execute(&mut tx)
-                    .await?;
-            }
-        }
+        let tx2 = self.create_metadata(metadata, tx).await?;
 
         match self.store.update(metadata, content).await {
             Ok(_) => {
-                tx.commit().await?;
+                tx2.commit().await?;
                 Ok(())
             }
             Err(err) => Err(err),
@@ -170,7 +153,7 @@ impl ObjectStore for Manager {
         // Metadata can be retrieved fully from the SQL database.
         // TODO: if that fails, try to re-hydrate from the object store.
 
-        let record = sqlx::query!(
+        if let Ok(record) = sqlx::query!(
             r#"
     SELECT id, parent, kind, name, mimeType, size, created, modified  FROM objects
     WHERE id = ?
@@ -178,36 +161,47 @@ impl ObjectStore for Manager {
             id
         )
         .fetch_one(&self.db_pool)
-        .await?;
+        .await
+        {
+            // Get the tags if any.
+            let tags: Vec<String> = sqlx::query!("SELECT tag FROM tags WHERE id = ?", id)
+                .fetch_all(&self.db_pool)
+                .await?
+                .iter()
+                .map(|r| r.tag.clone())
+                .collect();
 
-        // Get the tags if any.
-        let tags: Vec<String> = sqlx::query!("SELECT tag FROM tags WHERE id = ?", id)
-            .fetch_all(&self.db_pool)
-            .await?
-            .iter()
-            .map(|r| r.tag.clone())
-            .collect();
+            let mut meta = ObjectMetadata::new(
+                record.id.into(),
+                record.parent.into(),
+                record.kind.into(),
+                record.size,
+                &record.name,
+                &record.mimeType,
+                None,
+            );
 
-        let mut meta = ObjectMetadata::new(
-            record.id.into(),
-            record.parent.into(),
-            record.kind.into(),
-            record.size,
-            &record.name,
-            &record.mimeType,
-            None,
-        );
+            if !tags.is_empty() {
+                meta.set_tags(Some(tags));
+            }
 
-        if !tags.is_empty() {
-            meta.set_tags(Some(tags));
+            meta.set_created(DateTime::<Utc>::from_utc(record.created, Utc));
+            meta.set_modified(DateTime::<Utc>::from_utc(record.modified, Utc));
+
+            Ok(meta)
+        } else {
+            // Rehydrate from the file storage.
+            debug!(
+                "Object #{} not in index, fetching it from object storage.",
+                id
+            );
+            let metadata = self.store.get_metadata(id).await?;
+            let tx = self.db_pool.begin().await?;
+            let tx2 = self.create_metadata(&metadata, tx).await?;
+            tx2.commit().await?;
+
+            Ok(metadata)
         }
-
-        meta.set_created(DateTime::<Utc>::from_utc(record.created, Utc));
-        meta.set_modified(DateTime::<Utc>::from_utc(record.modified, Utc));
-
-        Ok(meta)
-
-        // self.store.get_metadata(id).await
     }
 
     async fn get_full(
@@ -287,4 +281,45 @@ async fn basic_manager() {
     // Expected failure
     let res = manager.get_metadata(meta.id()).await;
     assert!(res.is_err());
+}
+
+#[async_std::test]
+async fn rehydrate() {
+    use crate::common::{ObjectKind, ObjectStore};
+    use crate::file_store::FileStore;
+    use async_std::fs;
+
+    static CONTENT: [u8; 100] = [0; 100];
+
+    let _ = env_logger::try_init();
+
+    let _ = fs::remove_dir_all("./test-content/2").await;
+    let _ = fs::create_dir_all("./test-content/2").await;
+
+    let store = FileStore::new("./test-content/2").await.unwrap();
+    // Adding an object to the file store
+    let meta = ObjectMetadata::new(
+        0.into(),
+        0.into(),
+        ObjectKind::Leaf,
+        10,
+        "object 0",
+        "text/plain",
+        Some(vec!["one".into(), "two".into()]),
+    );
+    store.create(&meta, Box::new(&CONTENT[..])).await.unwrap();
+
+    let config = Config {
+        db_path: "./test-content/2/test_rehydrate.sqlite".into(),
+        data_dir: ".".into(),
+    };
+
+    let manager = Manager::new(config, Box::new(store)).await.unwrap();
+
+    assert_eq!(manager.has_object(meta.id()).await.unwrap(), false);
+
+    let res = manager.get_metadata(meta.id()).await.unwrap();
+    assert_eq!(res, meta);
+
+    assert_eq!(manager.has_object(meta.id()).await.unwrap(), true);
 }
