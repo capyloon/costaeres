@@ -10,6 +10,8 @@ use thiserror::Error;
 #[derive(sqlx::Type, Copy, Clone, Debug, Deserialize, Serialize, PartialEq)]
 pub struct ObjectId(i64);
 
+pub static ROOT_OBJECT_ID: ObjectId = ObjectId(0);
+
 impl fmt::Display for ObjectId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.0)
@@ -141,6 +143,8 @@ pub enum ObjectStoreError {
     Json(#[from] serde_json::Error),
     #[error("I/O Error: {0}")]
     Io(#[from] async_std::io::Error),
+    #[error("Invalid Container Id")]
+    InvalidContainerId,
 }
 
 impl PartialEq for ObjectStoreError {
@@ -151,7 +155,8 @@ impl PartialEq for ObjectStoreError {
             | (Self::NoSuchObject, Self::NoSuchObject)
             | (Self::Sql(_), Self::Sql(_))
             | (Self::Json(_), Self::Json(_))
-            | (Self::Io(_), Self::Io(_)) => true,
+            | (Self::Io(_), Self::Io(_))
+            | (Self::InvalidContainerId, Self::InvalidContainerId) => true,
             _ => false,
         }
     }

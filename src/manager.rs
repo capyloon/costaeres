@@ -9,7 +9,9 @@
 /// structure without hitting the remote store.
 /// Any failure of the remote side leads to a rollback of the database transaction
 /// to preserve the matching between both sides.
-use crate::common::{ObjectId, ObjectMetadata, ObjectStore, ObjectStoreError};
+use crate::common::{
+    ObjectId, ObjectKind, ObjectMetadata, ObjectStore, ObjectStoreError, ROOT_OBJECT_ID,
+};
 use crate::config::Config;
 use async_std::{fs::File, io::Read};
 use async_trait::async_trait;
@@ -89,6 +91,18 @@ impl Manager {
 
         Ok(count == 1)
     }
+
+    pub async fn is_container(&self, id: ObjectId) -> Result<bool, ObjectStoreError> {
+        let count = sqlx::query_scalar!(
+            "SELECT count(*) FROM objects WHERE id = ? and kind = ?",
+            id,
+            ObjectKind::Container
+        )
+        .fetch_one(&self.db_pool)
+        .await?;
+
+        Ok(count == 1)
+    }
 }
 
 #[async_trait(?Send)]
@@ -98,6 +112,20 @@ impl ObjectStore for Manager {
         metadata: &ObjectMetadata,
         content: Box<dyn Read + Unpin>,
     ) -> Result<(), ObjectStoreError> {
+        // Check container <-> leaf constraints
+        // container == leaf is only valid for the root (container == 0)
+        let parent = metadata.parent();
+        let id = metadata.id();
+        if parent == id && parent != ROOT_OBJECT_ID {
+            error!("Only the root can be its own container.");
+            return Err(ObjectStoreError::InvalidContainerId);
+        }
+        // Check that the parent is known container, except when we create the root.
+        if id != ROOT_OBJECT_ID && !self.is_container(parent).await? {
+            error!("Object #{} is not a container", parent);
+            return Err(ObjectStoreError::InvalidContainerId);
+        }
+
         // Start a transaction to store the new metadata.
         let tx = self.db_pool.begin().await?;
         let tx2 = self.create_metadata(metadata, tx).await?;
@@ -212,114 +240,161 @@ impl ObjectStore for Manager {
     }
 }
 
-#[async_std::test]
-async fn basic_manager() {
+#[cfg(test)]
+mod tests {
+    use super::*;
     use crate::common::{ObjectKind, ObjectStore};
     use crate::file_store::FileStore;
     use async_std::fs;
 
     static CONTENT: [u8; 100] = [0; 100];
 
-    let _ = env_logger::try_init();
+    // Prepare a test directory, and returns the matching config and file store.
+    async fn prepare_test(index: u32) -> (Config, FileStore) {
+        let _ = env_logger::try_init();
 
-    let _ = fs::remove_dir_all("./test-content/1").await;
-    let _ = fs::create_dir_all("./test-content/1").await;
+        let path = format!("./test-content/{}", index);
 
-    let store = FileStore::new("./test-content/1").await.unwrap();
+        let _ = fs::remove_dir_all(&path).await;
+        let _ = fs::create_dir_all(&path).await;
 
-    let config = Config {
-        db_path: "./test-content/1/test_create_db.sqlite".into(),
-        data_dir: ".".into(),
-    };
+        let store = FileStore::new(&path).await.unwrap();
 
-    let manager = Manager::new(config, Box::new(store)).await;
-    assert!(manager.is_ok(), "Failed to create a manager");
-    let manager = manager.unwrap();
+        let config = Config {
+            db_path: format!("{}/test_db.sqlite", &path),
+            data_dir: ".".into(),
+        };
 
-    // Adding an object.
-    let meta = ObjectMetadata::new(
-        0.into(),
-        0.into(),
-        ObjectKind::Leaf,
-        10,
-        "object 0",
-        "text/plain",
-        Some(vec!["one".into(), "two".into()]),
-    );
+        (config, store)
+    }
 
-    let res = manager.create(&meta, Box::new(&CONTENT[..])).await;
-    assert_eq!(res, Ok(()));
+    #[async_std::test]
+    async fn basic_manager() {
+        let (config, store) = prepare_test(1).await;
 
-    let res = manager.get_metadata(meta.id()).await.unwrap();
-    assert_eq!(res, meta);
+        let manager = Manager::new(config, Box::new(store)).await;
+        assert!(manager.is_ok(), "Failed to create a manager");
+        let manager = manager.unwrap();
 
-    // Delete a non-existent object.
-    let res = manager.delete(42.into()).await;
-    assert!(res.is_err());
+        // Adding an object.
+        let meta = ObjectMetadata::new(
+            0.into(),
+            0.into(),
+            ObjectKind::Leaf,
+            10,
+            "object 0",
+            "text/plain",
+            Some(vec!["one".into(), "two".into()]),
+        );
 
-    // Update the root object.
-    let meta = ObjectMetadata::new(
-        0.into(),
-        0.into(),
-        ObjectKind::Leaf,
-        100,
-        "object 0 updated",
-        "text/plain",
-        Some(vec!["one".into(), "two".into(), "three".into()]),
-    );
-    let res = manager.update(&meta, Box::new(&CONTENT[..])).await;
-    assert_eq!(res, Ok(()));
+        let res = manager.create(&meta, Box::new(&CONTENT[..])).await;
+        assert_eq!(res, Ok(()));
 
-    // Verify the updated metadata.
-    let res = manager.get_metadata(meta.id()).await.unwrap();
-    assert_eq!(res, meta);
+        let res = manager.get_metadata(meta.id()).await.unwrap();
+        assert_eq!(res, meta);
 
-    // Delete the root object
-    let res = manager.delete(0.into()).await;
-    assert!(res.is_ok());
+        // Delete a non-existent object.
+        let res = manager.delete(42.into()).await;
+        assert!(res.is_err());
 
-    // Expected failure
-    let res = manager.get_metadata(meta.id()).await;
-    assert!(res.is_err());
-}
+        // Update the root object.
+        let meta = ObjectMetadata::new(
+            0.into(),
+            0.into(),
+            ObjectKind::Leaf,
+            100,
+            "object 0 updated",
+            "text/plain",
+            Some(vec!["one".into(), "two".into(), "three".into()]),
+        );
+        let res = manager.update(&meta, Box::new(&CONTENT[..])).await;
+        assert_eq!(res, Ok(()));
 
-#[async_std::test]
-async fn rehydrate() {
-    use crate::common::{ObjectKind, ObjectStore};
-    use crate::file_store::FileStore;
-    use async_std::fs;
+        // Verify the updated metadata.
+        let res = manager.get_metadata(meta.id()).await.unwrap();
+        assert_eq!(res, meta);
 
-    static CONTENT: [u8; 100] = [0; 100];
+        // Delete the root object
+        let res = manager.delete(0.into()).await;
+        assert!(res.is_ok());
 
-    let _ = env_logger::try_init();
+        // Expected failure
+        let res = manager.get_metadata(meta.id()).await;
+        assert!(res.is_err());
+    }
 
-    let _ = fs::remove_dir_all("./test-content/2").await;
-    let _ = fs::create_dir_all("./test-content/2").await;
+    #[async_std::test]
+    async fn rehydrate() {
+        let (config, store) = prepare_test(2).await;
 
-    let store = FileStore::new("./test-content/2").await.unwrap();
-    // Adding an object to the file store
-    let meta = ObjectMetadata::new(
-        0.into(),
-        0.into(),
-        ObjectKind::Leaf,
-        10,
-        "object 0",
-        "text/plain",
-        Some(vec!["one".into(), "two".into()]),
-    );
-    store.create(&meta, Box::new(&CONTENT[..])).await.unwrap();
+        // Adding an object to the file store
+        let meta = ObjectMetadata::new(
+            0.into(),
+            0.into(),
+            ObjectKind::Leaf,
+            10,
+            "object 0",
+            "text/plain",
+            Some(vec!["one".into(), "two".into()]),
+        );
+        store.create(&meta, Box::new(&CONTENT[..])).await.unwrap();
 
-    let config = Config {
-        db_path: "./test-content/2/test_rehydrate.sqlite".into(),
-        data_dir: ".".into(),
-    };
+        let manager = Manager::new(config, Box::new(store)).await.unwrap();
 
-    let manager = Manager::new(config, Box::new(store)).await.unwrap();
+        assert_eq!(manager.has_object(meta.id()).await.unwrap(), false);
 
-    assert_eq!(manager.has_object(meta.id()).await.unwrap(), false);
+        let res = manager.get_metadata(meta.id()).await.unwrap();
+        assert_eq!(res, meta);
 
-    let res = manager.get_metadata(meta.id()).await.unwrap();
-    assert_eq!(res, meta);
+        assert_eq!(manager.has_object(meta.id()).await.unwrap(), true);
+    }
 
-    assert_eq!(manager.has_object(meta.id()).await.unwrap(), true);
+    #[async_std::test]
+    async fn check_constraints() {
+        let (config, store) = prepare_test(3).await;
+
+        let meta = ObjectMetadata::new(
+            1.into(),
+            1.into(),
+            ObjectKind::Leaf,
+            10,
+            "object 0",
+            "text/plain",
+            None,
+        );
+
+        let manager = Manager::new(config, Box::new(store)).await.unwrap();
+
+        // Fail to store an object where both id and parent are 1
+        let res = manager.create(&meta, Box::new(&CONTENT[..])).await;
+        assert_eq!(res, Err(ObjectStoreError::InvalidContainerId));
+
+        // Fail to store an object if the parent doesn't exist.
+        let leaf_meta = ObjectMetadata::new(
+            1.into(),
+            0.into(),
+            ObjectKind::Leaf,
+            10,
+            "leaf 1",
+            "text/plain",
+            None,
+        );
+        let res = manager.create(&leaf_meta, Box::new(&CONTENT[..])).await;
+        assert_eq!(res, Err(ObjectStoreError::InvalidContainerId));
+
+        // Create the root
+        let root_meta = ObjectMetadata::new(
+            0.into(),
+            0.into(),
+            ObjectKind::Container,
+            10,
+            "root",
+            "text/plain",
+            None,
+        );
+        manager.create(&root_meta, Box::new(&CONTENT[..])).await.unwrap();
+
+        // And now add the leaf.
+        manager.create(&leaf_meta, Box::new(&CONTENT[..])).await.unwrap();
+    }
 }
