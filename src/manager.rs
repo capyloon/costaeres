@@ -40,7 +40,7 @@ impl Manager {
         Ok(Manager { db_pool, store })
     }
 
-    // Use a existing transation to run the sql commands needed to create a metadata record.
+    /// Use a existing transation to run the sql commands needed to create a metadata record.
     async fn create_metadata<'c>(
         &self,
         metadata: &ObjectMetadata,
@@ -84,6 +84,7 @@ impl Manager {
         Ok(tx)
     }
 
+    /// Returns `true` if this object id is in the local index.
     pub async fn has_object(&self, id: ObjectId) -> Result<bool, ObjectStoreError> {
         let count = sqlx::query_scalar!("SELECT count(*) FROM objects WHERE id = ?", id)
             .fetch_one(&self.db_pool)
@@ -92,6 +93,7 @@ impl Manager {
         Ok(count == 1)
     }
 
+    /// Returns `true` if this object id is in the local index and is a container.
     pub async fn is_container(&self, id: ObjectId) -> Result<bool, ObjectStoreError> {
         let count = sqlx::query_scalar!(
             "SELECT count(*) FROM objects WHERE id = ? and kind = ?",
@@ -103,6 +105,22 @@ impl Manager {
 
         Ok(count == 1)
     }
+
+    /// Check container <-> leaf constraints
+    // container == leaf is only valid for the root (container == 0)
+    pub async fn check_container_leaf(&self, id: ObjectId, parent: ObjectId)-> Result<(), ObjectStoreError> {
+        if parent == id && parent != ROOT_OBJECT_ID {
+            error!("Only the root can be its own container.");
+            return Err(ObjectStoreError::InvalidContainerId);
+        }
+        // Check that the parent is a known container, except when we create the root.
+        if id != ROOT_OBJECT_ID && !self.is_container(parent).await? {
+            error!("Object #{} is not a container", parent);
+            return Err(ObjectStoreError::InvalidContainerId);
+        }
+
+        Ok(())
+    }
 }
 
 #[async_trait(?Send)]
@@ -112,19 +130,7 @@ impl ObjectStore for Manager {
         metadata: &ObjectMetadata,
         content: Box<dyn Read + Unpin>,
     ) -> Result<(), ObjectStoreError> {
-        // Check container <-> leaf constraints
-        // container == leaf is only valid for the root (container == 0)
-        let parent = metadata.parent();
-        let id = metadata.id();
-        if parent == id && parent != ROOT_OBJECT_ID {
-            error!("Only the root can be its own container.");
-            return Err(ObjectStoreError::InvalidContainerId);
-        }
-        // Check that the parent is known container, except when we create the root.
-        if id != ROOT_OBJECT_ID && !self.is_container(parent).await? {
-            error!("Object #{} is not a container", parent);
-            return Err(ObjectStoreError::InvalidContainerId);
-        }
+        self.check_container_leaf(metadata.id(), metadata.parent()).await?;
 
         // Start a transaction to store the new metadata.
         let tx = self.db_pool.begin().await?;
@@ -145,6 +151,8 @@ impl ObjectStore for Manager {
         metadata: &ObjectMetadata,
         content: Box<dyn Read + Unpin>,
     ) -> Result<(), ObjectStoreError> {
+        self.check_container_leaf(metadata.id(), metadata.parent()).await?;
+
         let mut tx = self.db_pool.begin().await?;
         let id = metadata.id();
         sqlx::query!("DELETE FROM objects where id = ?", id)
