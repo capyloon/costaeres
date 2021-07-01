@@ -18,6 +18,7 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use log::{debug, error};
 use sqlx::{Sqlite, SqlitePool, Transaction};
+use std::collections::HashSet;
 
 pub struct Manager {
     db_pool: SqlitePool,
@@ -108,7 +109,11 @@ impl Manager {
 
     /// Check container <-> leaf constraints
     // container == leaf is only valid for the root (container == 0)
-    pub async fn check_container_leaf(&self, id: ObjectId, parent: ObjectId)-> Result<(), ObjectStoreError> {
+    pub async fn check_container_leaf(
+        &self,
+        id: ObjectId,
+        parent: ObjectId,
+    ) -> Result<(), ObjectStoreError> {
         if parent == id && parent != ROOT_OBJECT_ID {
             error!("Only the root can be its own container.");
             return Err(ObjectStoreError::InvalidContainerId);
@@ -130,7 +135,8 @@ impl ObjectStore for Manager {
         metadata: &ObjectMetadata,
         content: Box<dyn Read + Unpin>,
     ) -> Result<(), ObjectStoreError> {
-        self.check_container_leaf(metadata.id(), metadata.parent()).await?;
+        self.check_container_leaf(metadata.id(), metadata.parent())
+            .await?;
 
         // Start a transaction to store the new metadata.
         let tx = self.db_pool.begin().await?;
@@ -151,7 +157,8 @@ impl ObjectStore for Manager {
         metadata: &ObjectMetadata,
         content: Box<dyn Read + Unpin>,
     ) -> Result<(), ObjectStoreError> {
-        self.check_container_leaf(metadata.id(), metadata.parent()).await?;
+        self.check_container_leaf(metadata.id(), metadata.parent())
+            .await?;
 
         let mut tx = self.db_pool.begin().await?;
         let id = metadata.id();
@@ -172,17 +179,71 @@ impl ObjectStore for Manager {
 
     async fn delete(&self, id: ObjectId) -> Result<(), ObjectStoreError> {
         let mut tx = self.db_pool.begin().await?;
+        let is_container = self.is_container(id).await?;
+
+        // Delete the object itself.
+        // The tags will be removed by the delete cascade sql rule.
         sqlx::query!("DELETE FROM objects where id = ?", id)
             .execute(&mut tx)
             .await?;
 
-        match self.store.delete(id).await {
-            Ok(_) => {
-                tx.commit().await?;
-                Ok(())
-            }
-            Err(err) => Err(err),
+        if !is_container {
+            self.store.delete(id).await?;
+            tx.commit().await?;
+            return Ok(());
         }
+
+        // Collect all the children, in a non-recursive way.
+
+        // This set holds the list of all children to remove.
+        let mut to_delete: HashSet<ObjectId> = HashSet::new();
+
+        // This vector holds the list of remaining containers
+        // that need to be checked.
+        let mut containers: Vec<ObjectId> = vec![id];
+
+        loop {
+            let mut new_obj = vec![];
+
+            for source_id in containers {
+                let children: Vec<ObjectId> =
+                    sqlx::query!("SELECT id FROM objects WHERE parent = ?", source_id)
+                        .fetch_all(&self.db_pool)
+                        .await?
+                        .iter()
+                        .map(|r| r.id.into())
+                        .collect();
+
+                for child in children {
+                    // 1. add this child to the final set.
+                    to_delete.insert(child);
+                    // 2. If it's a container, add it to the list of containers for the next iteration.
+                    if self.is_container(child).await? {
+                        new_obj.push(child);
+                    }
+                }
+            }
+
+            if new_obj.is_empty() {
+                break;
+            }
+
+            // swap the containers to iterate over in the next loop iteration.
+            containers = new_obj;
+        }
+
+        for child in to_delete {
+            // Delete the child.
+            // The tags will be removed by the delete cascade sql rule.
+            sqlx::query!("DELETE FROM objects where id = ?", child)
+                .execute(&mut tx)
+                .await?;
+            self.store.delete(child).await?;
+        }
+
+        self.store.delete(id).await?;
+        tx.commit().await?;
+        Ok(())
     }
 
     async fn get_metadata(&self, id: ObjectId) -> Result<ObjectMetadata, ObjectStoreError> {
@@ -400,10 +461,16 @@ mod tests {
             "text/plain",
             None,
         );
-        manager.create(&root_meta, Box::new(&CONTENT[..])).await.unwrap();
+        manager
+            .create(&root_meta, Box::new(&CONTENT[..]))
+            .await
+            .unwrap();
 
         // And now add the leaf.
-        manager.create(&leaf_meta, Box::new(&CONTENT[..])).await.unwrap();
+        manager
+            .create(&leaf_meta, Box::new(&CONTENT[..]))
+            .await
+            .unwrap();
 
         // Try to update the leaf to a non-existent parent.
         let leaf_meta = ObjectMetadata::new(
@@ -417,6 +484,95 @@ mod tests {
         );
         let res = manager.create(&leaf_meta, Box::new(&CONTENT[..])).await;
         assert_eq!(res, Err(ObjectStoreError::InvalidContainerId));
+    }
 
+    #[async_std::test]
+    async fn delete_hierarchy() {
+        let (config, store) = prepare_test(4).await;
+
+        let manager = Manager::new(config, Box::new(store)).await.unwrap();
+
+        // Adding an object to the file store
+        let root = ObjectMetadata::new(
+            0.into(),
+            0.into(),
+            ObjectKind::Container,
+            10,
+            "root",
+            "text/plain",
+            None,
+        );
+        manager.create(&root, Box::new(&CONTENT[..])).await.unwrap();
+
+        // Add a sub-container.
+        let container = ObjectMetadata::new(
+            1.into(),
+            0.into(),
+            ObjectKind::Container,
+            10,
+            "container",
+            "text/plain",
+            None,
+        );
+        manager
+            .create(&container, Box::new(&CONTENT[..]))
+            .await
+            .unwrap();
+
+        // Add a few children to the container.
+        for i in 5..15 {
+            let child = ObjectMetadata::new(
+                i.into(),
+                1.into(),
+                if i == 10 {
+                    ObjectKind::Container
+                } else {
+                    ObjectKind::Leaf
+                },
+                10,
+                &format!("child #{}", i),
+                "text/plain",
+                None,
+            );
+            manager
+                .create(&child, Box::new(&CONTENT[..]))
+                .await
+                .unwrap();
+        }
+
+        // Add a few children to the sub-container #10.
+        for i in 25..35 {
+            let child = ObjectMetadata::new(
+                i.into(),
+                10.into(),
+                if i == 10 {
+                    ObjectKind::Container
+                } else {
+                    ObjectKind::Leaf
+                },
+                10,
+                &format!("child #{}", i),
+                "text/plain",
+                None,
+            );
+            manager
+                .create(&child, Box::new(&CONTENT[..]))
+                .await
+                .unwrap();
+        }
+
+        // Delete a single child.
+        manager.delete(12.into()).await.unwrap();
+        // Child 12 disappears
+        assert_eq!(manager.has_object(12.into()).await.unwrap(), false);
+
+        // Child 10 exists now.
+        assert_eq!(manager.has_object(10.into()).await.unwrap(), true);
+
+        // Delete the container.
+        manager.delete(1.into()).await.unwrap();
+        // Child 10 disappears, but not the root.
+        assert_eq!(manager.has_object(10.into()).await.unwrap(), false);
+        assert_eq!(manager.has_object(0.into()).await.unwrap(), true);
     }
 }

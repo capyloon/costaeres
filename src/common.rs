@@ -7,7 +7,7 @@ use std::fmt;
 use thiserror::Error;
 
 #[sqlx(transparent)]
-#[derive(sqlx::Type, Copy, Clone, Debug, Deserialize, Serialize, PartialEq)]
+#[derive(sqlx::Type, Copy, Clone, Debug, Deserialize, Serialize, PartialEq, Eq, Hash)]
 pub struct ObjectId(i64);
 
 pub static ROOT_OBJECT_ID: ObjectId = ObjectId(0);
