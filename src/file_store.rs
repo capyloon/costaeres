@@ -2,7 +2,9 @@
 /// Each object is stored in 2 files:
 /// ${object.id}.meta for the metadata serialized as Json.
 /// ${object.id}.content for the opaque content.
-use crate::common::{ObjectId, ObjectMetadata, ObjectStore, ObjectStoreError};
+use crate::common::{
+    BoxedReader, ObjectId, ObjectKind, ObjectMetadata, ObjectStore, ObjectStoreError,
+};
 use async_std::{fs, fs::File, io::prelude::WriteExt, io::Read};
 use async_trait::async_trait;
 use std::path::PathBuf;
@@ -44,7 +46,7 @@ impl ObjectStore for FileStore {
     async fn create(
         &self,
         metadata: &ObjectMetadata,
-        content: Box<dyn Read + Unpin>,
+        content: BoxedReader,
     ) -> Result<(), ObjectStoreError> {
         // 0. TODO: check if we have enough storage available.
 
@@ -62,11 +64,13 @@ impl ObjectStore for FileStore {
         file.write_all(&meta).await?;
         file.sync_all().await?;
 
-        // 3. Store the content
-        let mut file = File::create(&content_path).await?;
-        file.set_len(metadata.size() as _).await?;
-        futures::io::copy(content, &mut file).await?;
-        file.sync_all().await?;
+        // 3. Store the content for leaf nodes.
+        if metadata.kind() == ObjectKind::Leaf {
+            let mut file = File::create(&content_path).await?;
+            file.set_len(metadata.size() as _).await?;
+            futures::io::copy(content, &mut file).await?;
+            file.sync_all().await?;
+        }
 
         Ok(())
     }
@@ -74,10 +78,23 @@ impl ObjectStore for FileStore {
     async fn update(
         &self,
         metadata: &ObjectMetadata,
-        content: Box<dyn Read + Unpin>,
+        content: BoxedReader,
     ) -> Result<(), ObjectStoreError> {
         self.delete(metadata.id()).await?;
         self.create(metadata, content).await?;
+        Ok(())
+    }
+
+    async fn update_content_from_slice(
+        &self,
+        id: ObjectId,
+        content: &[u8],
+    ) -> Result<(), ObjectStoreError> {
+        let (_, content_path) = self.get_paths(id);
+        let mut file = File::create(&content_path).await?;
+        futures::io::copy(content, &mut file).await?;
+        file.sync_all().await?;
+
         Ok(())
     }
 
@@ -118,7 +135,6 @@ impl ObjectStore for FileStore {
         let mut buffer = vec![];
         file.read_to_end(&mut buffer).await?;
         let metadata: ObjectMetadata = serde_json::from_slice(&buffer)?;
-
         let file = File::open(&content_path)
             .await
             .map_err(|_| ObjectStoreError::NoSuchObject)?;

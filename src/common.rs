@@ -145,6 +145,8 @@ pub enum ObjectStoreError {
     Io(#[from] async_std::io::Error),
     #[error("Invalid Container Id")]
     InvalidContainerId,
+    #[error("Bincode error: {0}")]
+    Bincode(#[from] bincode::Error),
 }
 
 impl PartialEq for ObjectStoreError {
@@ -156,11 +158,14 @@ impl PartialEq for ObjectStoreError {
             | (Self::Sql(_), Self::Sql(_))
             | (Self::Json(_), Self::Json(_))
             | (Self::Io(_), Self::Io(_))
-            | (Self::InvalidContainerId, Self::InvalidContainerId) => true,
+            | (Self::InvalidContainerId, Self::InvalidContainerId)
+            | (Self::Bincode(_), Self::Bincode(_)) => true,
             _ => false,
         }
     }
 }
+
+pub type BoxedReader = Box<dyn Read + Unpin>;
 
 // Operations needed for an object store.
 // These are all async operations.
@@ -169,13 +174,19 @@ pub trait ObjectStore {
     async fn create(
         &self,
         metadata: &ObjectMetadata,
-        content: Box<dyn Read + Unpin>,
+        content: BoxedReader,
     ) -> Result<(), ObjectStoreError>;
 
     async fn update(
         &self,
         metadata: &ObjectMetadata,
-        content: Box<dyn Read + Unpin>,
+        content: BoxedReader,
+    ) -> Result<(), ObjectStoreError>;
+
+    async fn update_content_from_slice(
+        &self,
+        id: ObjectId,
+        content: &[u8],
     ) -> Result<(), ObjectStoreError>;
 
     async fn delete(&self, id: ObjectId) -> Result<(), ObjectStoreError>;
@@ -186,4 +197,36 @@ pub trait ObjectStore {
         &self,
         id: ObjectId,
     ) -> Result<(ObjectMetadata, Box<dyn Read>), ObjectStoreError>;
+}
+
+// Operations needed for an object manager.
+#[async_trait(?Send)]
+pub trait ObjectManager {
+    async fn create(
+        &self,
+        metadata: &ObjectMetadata,
+        content: BoxedReader,
+    ) -> Result<(), ObjectStoreError>;
+
+    async fn update(
+        &self,
+        metadata: &ObjectMetadata,
+        content: BoxedReader,
+    ) -> Result<(), ObjectStoreError>;
+
+    async fn delete(&self, id: ObjectId) -> Result<(), ObjectStoreError>;
+
+    async fn get_metadata(&self, id: ObjectId) -> Result<ObjectMetadata, ObjectStoreError>;
+
+    // Returns the metadata and content for a leaf object.
+    async fn get_leaf(
+        &self,
+        id: ObjectId,
+    ) -> Result<(ObjectMetadata, Box<dyn Read>), ObjectStoreError>;
+
+    // Returns the metadata for the container, and the list of metadata objects for its children, if any.
+    async fn get_container(
+        &self,
+        id: ObjectId,
+    ) -> Result<(ObjectMetadata, Vec<ObjectMetadata>), ObjectStoreError>;
 }

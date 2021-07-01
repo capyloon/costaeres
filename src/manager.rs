@@ -1,20 +1,28 @@
 /// Main structure, managing the overall flow of operations.
 /// It uses a SQL database to store the metadata, and relies
 /// on another store to provide the content.
+///
 /// When a request fails at the database level (eg. unknown object id),
 /// it tries to re-hydrade the database by fetching the metadata
 /// from the store.
+///
 /// The manager knows about Container and Leafs, and will do the appropriate
 /// operations to maintain this data properly. That allows to get all the tree
 /// structure without hitting the remote store.
+///
+/// In order to re-hydrate properly, a Container content is made of the list of
+/// its children's id.
+///
 /// Any failure of the remote side leads to a rollback of the database transaction
-/// to preserve the matching between both sides.
+/// to preserve the consistency between both sides.
 use crate::common::{
-    ObjectId, ObjectKind, ObjectMetadata, ObjectStore, ObjectStoreError, ROOT_OBJECT_ID,
+    BoxedReader, ObjectId, ObjectKind, ObjectManager, ObjectMetadata, ObjectStore,
+    ObjectStoreError, ROOT_OBJECT_ID,
 };
 use crate::config::Config;
 use async_std::{fs::File, io::Read};
 use async_trait::async_trait;
+use bincode::Options;
 use chrono::{DateTime, Utc};
 use log::{debug, error};
 use sqlx::{Sqlite, SqlitePool, Transaction};
@@ -24,6 +32,8 @@ pub struct Manager {
     db_pool: SqlitePool,
     store: Box<dyn ObjectStore>,
 }
+
+static EMPTY_CONTENT: [u8; 0] = [0; 0];
 
 impl Manager {
     pub async fn new(config: Config, store: Box<dyn ObjectStore>) -> Result<Self, ()> {
@@ -94,6 +104,15 @@ impl Manager {
         Ok(count == 1)
     }
 
+    /// Returns the number of objects in the local index.
+    pub async fn object_count(&self) -> Result<i32, ObjectStoreError> {
+        let count = sqlx::query_scalar!("SELECT count(*) FROM objects")
+            .fetch_one(&self.db_pool)
+            .await?;
+
+        Ok(count)
+    }
+
     /// Returns `true` if this object id is in the local index and is a container.
     pub async fn is_container(&self, id: ObjectId) -> Result<bool, ObjectStoreError> {
         let count = sqlx::query_scalar!(
@@ -126,21 +145,107 @@ impl Manager {
 
         Ok(())
     }
+
+    pub async fn children_of<'c, E: sqlx::Executor<'c, Database = Sqlite>>(
+        &self,
+        parent: ObjectId,
+        executor: E,
+    ) -> Result<Vec<ObjectId>, ObjectStoreError> {
+        let children: Vec<ObjectId> =
+            sqlx::query!("SELECT id FROM objects WHERE parent = ?", parent)
+                .fetch_all(executor)
+                .await?
+                .iter()
+                .map(|r| r.id.into())
+                .collect();
+
+        Ok(children)
+    }
+
+    pub async fn serialize_children_of<'c, E: sqlx::Executor<'c, Database = Sqlite>>(
+        &self,
+        parent: ObjectId,
+        executor: E,
+    ) -> Result<Vec<u8>, ObjectStoreError> {
+        let children = self.children_of(parent, executor).await?;
+        let bincode = bincode::options().with_big_endian().with_varint_encoding();
+        let res = bincode.serialize(&children)?;
+
+        Ok(res)
+    }
+
+    pub async fn update_container_content<'c, E: sqlx::Executor<'c, Database = Sqlite>>(
+        &self,
+        parent: ObjectId,
+        executor: E,
+    ) -> Result<(), ObjectStoreError> {
+        let children = self.serialize_children_of(parent, executor).await?;
+        self.store
+            .update_content_from_slice(parent, &children)
+            .await?;
+
+        Ok(())
+    }
+
+    pub async fn parent_of<'c, E: sqlx::Executor<'c, Database = Sqlite>>(
+        &self,
+        id: ObjectId,
+        executor: E,
+    ) -> Result<ObjectId, ObjectStoreError> {
+        let maybe_parent = sqlx::query!("SELECT parent FROM objects WHERE id = ?", id)
+            .fetch_optional(executor)
+            .await?;
+
+        if let Some(record) = maybe_parent {
+            return Ok(record.parent.into());
+        }
+        Err(ObjectStoreError::NoSuchObject)
+    }
+
+    pub async fn clear(&self) -> Result<(), ObjectStoreError> {
+        sqlx::query!("DELETE FROM objects")
+            .execute(&self.db_pool)
+            .await?;
+        sqlx::query!("DELETE FROM tags")
+            .execute(&self.db_pool)
+            .await?;
+
+        Ok(())
+    }
+
+    pub async fn create_root(&self)-> Result<(), ObjectStoreError> {
+        let root = ObjectMetadata::new(
+            0.into(),
+            0.into(),
+            ObjectKind::Container,
+            0,
+            "/",
+            "inode/directory",
+            None,
+        );
+        self.create(&root, Box::new(&EMPTY_CONTENT[..])).await
+    }
 }
 
 #[async_trait(?Send)]
-impl ObjectStore for Manager {
+impl ObjectManager for Manager {
     async fn create(
         &self,
         metadata: &ObjectMetadata,
-        content: Box<dyn Read + Unpin>,
+        content: BoxedReader,
     ) -> Result<(), ObjectStoreError> {
         self.check_container_leaf(metadata.id(), metadata.parent())
             .await?;
 
         // Start a transaction to store the new metadata.
         let tx = self.db_pool.begin().await?;
-        let tx2 = self.create_metadata(metadata, tx).await?;
+        let mut tx2 = self.create_metadata(metadata, tx).await?;
+
+        // Update the children content of the parent if this is not creating the root.
+        if metadata.id() != ROOT_OBJECT_ID {
+            self.update_container_content(metadata.parent(), &mut tx2)
+                .await?;
+        }
 
         // Create the store entry, and commit the SQlite transaction in case of success.
         match self.store.create(metadata, content).await {
@@ -155,7 +260,7 @@ impl ObjectStore for Manager {
     async fn update(
         &self,
         metadata: &ObjectMetadata,
-        content: Box<dyn Read + Unpin>,
+        content: BoxedReader,
     ) -> Result<(), ObjectStoreError> {
         self.check_container_leaf(metadata.id(), metadata.parent())
             .await?;
@@ -166,7 +271,13 @@ impl ObjectStore for Manager {
             .execute(&mut tx)
             .await?;
 
-        let tx2 = self.create_metadata(metadata, tx).await?;
+        let mut tx2 = self.create_metadata(metadata, tx).await?;
+
+        // Update the children content of the parent if this is not creating the root.
+        if metadata.id() != ROOT_OBJECT_ID {
+            self.update_container_content(metadata.parent(), &mut tx2)
+                .await?;
+        }
 
         match self.store.update(metadata, content).await {
             Ok(_) => {
@@ -181,6 +292,8 @@ impl ObjectStore for Manager {
         let mut tx = self.db_pool.begin().await?;
         let is_container = self.is_container(id).await?;
 
+        let parent_id = self.parent_of(id, &mut tx).await?;
+
         // Delete the object itself.
         // The tags will be removed by the delete cascade sql rule.
         sqlx::query!("DELETE FROM objects where id = ?", id)
@@ -189,6 +302,7 @@ impl ObjectStore for Manager {
 
         if !is_container {
             self.store.delete(id).await?;
+            self.update_container_content(parent_id, &mut tx).await?;
             tx.commit().await?;
             return Ok(());
         }
@@ -206,13 +320,7 @@ impl ObjectStore for Manager {
             let mut new_obj = vec![];
 
             for source_id in containers {
-                let children: Vec<ObjectId> =
-                    sqlx::query!("SELECT id FROM objects WHERE parent = ?", source_id)
-                        .fetch_all(&self.db_pool)
-                        .await?
-                        .iter()
-                        .map(|r| r.id.into())
-                        .collect();
+                let children: Vec<ObjectId> = self.children_of(source_id, &self.db_pool).await?;
 
                 for child in children {
                     // 1. add this child to the final set.
@@ -242,6 +350,7 @@ impl ObjectStore for Manager {
         }
 
         self.store.delete(id).await?;
+        self.update_container_content(parent_id, &mut tx).await?;
         tx.commit().await?;
         Ok(())
     }
@@ -301,10 +410,20 @@ impl ObjectStore for Manager {
         }
     }
 
-    async fn get_full(
+    async fn get_leaf(
         &self,
         id: ObjectId,
     ) -> Result<(ObjectMetadata, Box<dyn Read>), ObjectStoreError> {
+        // Just relay to the underlying store since we don't keep the content in the index.
         self.store.get_full(id).await
+    }
+
+    async fn get_container(
+        &self,
+        id: ObjectId,
+    ) -> Result<(ObjectMetadata, Vec<ObjectMetadata>), ObjectStoreError> {
+        let meta = self.get_metadata(id).await?;
+        // TODO: get children metadata.
+        Ok((meta, vec![]))
     }
 }

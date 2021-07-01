@@ -81,12 +81,12 @@ async fn basic_manager() {
 }
 
 #[async_std::test]
-async fn rehydrate() {
+async fn rehydrate_single() {
     let (config, store) = prepare_test(2).await;
 
     // Adding an object to the file store
     let meta = ObjectMetadata::new(
-        0.into(),
+        1.into(),
         0.into(),
         ObjectKind::Leaf,
         10,
@@ -262,4 +262,78 @@ async fn delete_hierarchy() {
     // Child 10 disappears, but not the root.
     assert_eq!(manager.has_object(10.into()).await.unwrap(), false);
     assert_eq!(manager.has_object(0.into()).await.unwrap(), true);
+}
+
+#[async_std::test]
+async fn rehydrate_full() {
+    let (config, store) = prepare_test(5).await;
+
+    let manager = Manager::new(config, Box::new(store)).await.unwrap();
+
+    // Adding the root to the file store.
+    manager.create_root().await.unwrap();
+
+    // Add a sub-container.
+    let container = ObjectMetadata::new(
+        1.into(),
+        0.into(),
+        ObjectKind::Container,
+        10,
+        "container",
+        "text/plain",
+        None,
+    );
+    manager
+        .create(&container, Box::new(&CONTENT[..]))
+        .await
+        .unwrap();
+
+    // Add a few children to the container.
+    for i in 5..15 {
+        let child = ObjectMetadata::new(
+            i.into(),
+            1.into(),
+            if i == 10 {
+                ObjectKind::Container
+            } else {
+                ObjectKind::Leaf
+            },
+            10,
+            &format!("child #{}", i),
+            "text/plain",
+            None,
+        );
+        manager
+            .create(&child, Box::new(&CONTENT[..]))
+            .await
+            .unwrap();
+    }
+
+    // Add a few children to the sub-container #10.
+    for i in 25..35 {
+        let child = ObjectMetadata::new(
+            i.into(),
+            10.into(),
+            if i == 10 {
+                ObjectKind::Container
+            } else {
+                ObjectKind::Leaf
+            },
+            10,
+            &format!("child #{}", i),
+            "text/plain",
+            None,
+        );
+        manager
+            .create(&child, Box::new(&CONTENT[..]))
+            .await
+            .unwrap();
+    }
+
+    assert_eq!(manager.object_count().await.unwrap(), 22);
+
+    // Clear the local index.
+    manager.clear().await.unwrap();
+
+    assert_eq!(manager.object_count().await.unwrap(), 0);
 }
