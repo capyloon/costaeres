@@ -5,7 +5,7 @@
 use crate::common::{
     BoxedReader, ObjectId, ObjectKind, ObjectMetadata, ObjectStore, ObjectStoreError,
 };
-use async_std::{fs, fs::File, io::prelude::WriteExt, io::Read};
+use async_std::{fs, fs::File, io::prelude::WriteExt};
 use async_trait::async_trait;
 use std::path::PathBuf;
 
@@ -124,7 +124,7 @@ impl ObjectStore for FileStore {
     async fn get_full(
         &self,
         id: ObjectId,
-    ) -> Result<(ObjectMetadata, Box<dyn Read>), ObjectStoreError> {
+    ) -> Result<(ObjectMetadata, BoxedReader), ObjectStoreError> {
         use async_std::io::ReadExt;
 
         let (meta_path, content_path) = self.get_paths(id);
@@ -140,5 +140,15 @@ impl ObjectStore for FileStore {
             .map_err(|_| ObjectStoreError::NoSuchObject)?;
 
         Ok((metadata, Box::new(file)))
+    }
+
+    async fn get_content(&self, id: ObjectId) -> Result<BoxedReader, ObjectStoreError> {
+        let (_, content_path) = self.get_paths(id);
+
+        let file = File::open(&content_path)
+            .await
+            .map_err(|_| ObjectStoreError::NoSuchObject)?;
+
+        Ok(Box::new(file))
     }
 }

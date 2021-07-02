@@ -334,6 +334,9 @@ async fn rehydrate_full() {
 
     // Clear the local index.
     manager.clear().await.unwrap();
-
     assert_eq!(manager.object_count().await.unwrap(), 0);
+
+    let (root_meta, children) = manager.get_root().await.unwrap();
+    assert_eq!(root_meta.id(), 0.into());
+    assert_eq!(children.len(), 1);
 }

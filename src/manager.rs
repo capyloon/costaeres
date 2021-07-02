@@ -20,7 +20,7 @@ use crate::common::{
     ObjectStoreError, ROOT_OBJECT_ID,
 };
 use crate::config::Config;
-use async_std::{fs::File, io::Read};
+use async_std::fs::File;
 use async_trait::async_trait;
 use bincode::Options;
 use chrono::{DateTime, Utc};
@@ -151,13 +151,15 @@ impl Manager {
         parent: ObjectId,
         executor: E,
     ) -> Result<Vec<ObjectId>, ObjectStoreError> {
-        let children: Vec<ObjectId> =
-            sqlx::query!("SELECT id FROM objects WHERE parent = ?", parent)
-                .fetch_all(executor)
-                .await?
-                .iter()
-                .map(|r| r.id.into())
-                .collect();
+        let children: Vec<ObjectId> = sqlx::query!(
+            "SELECT id FROM objects WHERE parent = ? and parent != id",
+            parent
+        )
+        .fetch_all(executor)
+        .await?
+        .iter()
+        .map(|r| r.id.into())
+        .collect();
 
         Ok(children)
     }
@@ -213,7 +215,7 @@ impl Manager {
         Ok(())
     }
 
-    pub async fn create_root(&self)-> Result<(), ObjectStoreError> {
+    pub async fn create_root(&self) -> Result<(), ObjectStoreError> {
         let root = ObjectMetadata::new(
             0.into(),
             0.into(),
@@ -224,6 +226,12 @@ impl Manager {
             None,
         );
         self.create(&root, Box::new(&EMPTY_CONTENT[..])).await
+    }
+
+    pub async fn get_root(
+        &self,
+    ) -> Result<(ObjectMetadata, Vec<ObjectMetadata>), ObjectStoreError> {
+        self.get_container(ROOT_OBJECT_ID).await
     }
 }
 
@@ -413,17 +421,42 @@ impl ObjectManager for Manager {
     async fn get_leaf(
         &self,
         id: ObjectId,
-    ) -> Result<(ObjectMetadata, Box<dyn Read>), ObjectStoreError> {
-        // Just relay to the underlying store since we don't keep the content in the index.
-        self.store.get_full(id).await
+    ) -> Result<(ObjectMetadata, BoxedReader), ObjectStoreError> {
+        let meta = self.get_metadata(id).await?;
+
+        if meta.kind() != ObjectKind::Leaf {
+            return Err(ObjectStoreError::NoSuchObject);
+        }
+
+        // Just relay content from the underlying store since we don't keep the content in the index.
+        Ok((meta, self.store.get_content(id).await?))
     }
 
     async fn get_container(
         &self,
         id: ObjectId,
     ) -> Result<(ObjectMetadata, Vec<ObjectMetadata>), ObjectStoreError> {
+        use async_std::io::ReadExt;
+
         let meta = self.get_metadata(id).await?;
-        // TODO: get children metadata.
-        Ok((meta, vec![]))
+
+        if meta.kind() != ObjectKind::Container {
+            return Err(ObjectStoreError::NoSuchObject);
+        }
+
+        // Read the list of children from the container content.
+        let mut file = self.store.get_content(id).await?;
+        let mut buffer = vec![];
+        file.read_to_end(&mut buffer).await?;
+        let bincode = bincode::options().with_big_endian().with_varint_encoding();
+        let children: Vec<ObjectId> = bincode.deserialize(&buffer)?;
+
+        // Get the metadata for each child.
+        let mut res = vec![];
+        for child in children {
+            res.push(self.get_metadata(child).await?);
+        }
+
+        Ok((meta, res))
     }
 }

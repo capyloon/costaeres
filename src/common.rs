@@ -193,10 +193,12 @@ pub trait ObjectStore {
 
     async fn get_metadata(&self, id: ObjectId) -> Result<ObjectMetadata, ObjectStoreError>;
 
+    async fn get_content(&self, id: ObjectId) -> Result<BoxedReader, ObjectStoreError>;
+
     async fn get_full(
         &self,
         id: ObjectId,
-    ) -> Result<(ObjectMetadata, Box<dyn Read>), ObjectStoreError>;
+    ) -> Result<(ObjectMetadata, BoxedReader), ObjectStoreError>;
 }
 
 // Operations needed for an object manager.
@@ -222,7 +224,7 @@ pub trait ObjectManager {
     async fn get_leaf(
         &self,
         id: ObjectId,
-    ) -> Result<(ObjectMetadata, Box<dyn Read>), ObjectStoreError>;
+    ) -> Result<(ObjectMetadata, BoxedReader), ObjectStoreError>;
 
     // Returns the metadata for the container, and the list of metadata objects for its children, if any.
     async fn get_container(
