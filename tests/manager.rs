@@ -339,4 +339,8 @@ async fn rehydrate_full() {
     let (root_meta, children) = manager.get_root().await.unwrap();
     assert_eq!(root_meta.id(), 0.into());
     assert_eq!(children.len(), 1);
+
+    let (sub_meta, children) = manager.get_container(children[0].id()).await.unwrap();
+    assert_eq!(sub_meta.id(), 1.into());
+    assert_eq!(children.len(), 10);
 }
