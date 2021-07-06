@@ -105,19 +105,19 @@ impl ObjectMetadata {
     }
 
     pub fn created(&self) -> DateTime<Utc> {
-        self.created.clone()
+        self.created
     }
 
     pub fn set_created(&mut self, date: DateTime<Utc>) {
         self.created = date;
     }
 
-    pub fn set_modified(&mut self, date: DateTime<Utc>) {
-        self.modified = date;
+    pub fn modified(&self) -> DateTime<Utc> {
+        self.modified
     }
 
-    pub fn modified(&self) -> DateTime<Utc> {
-        self.modified.clone()
+    pub fn set_modified(&mut self, date: DateTime<Utc>) {
+        self.modified = date;
     }
 
     pub fn tags(&self) -> &Option<Vec<String>> {
