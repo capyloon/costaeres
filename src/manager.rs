@@ -296,6 +296,45 @@ impl Manager {
 
         Ok(results)
     }
+
+    // Retrieve the list of objects matching the given tag, optionnaly restricted to a given mime type.
+    // TODO: pagination
+    pub async fn by_tag(
+        &self,
+        tag: &str,
+        mime: Option<&str>,
+    ) -> Result<Vec<ObjectId>, ObjectStoreError> {
+        if tag.trim().is_empty() {
+            return Err(ObjectStoreError::Custom("EmptyTagQuery".into()));
+        }
+
+        let results: Vec<ObjectId> = if let Some(mime) = mime {
+            sqlx::query!(
+                r#"SELECT objects.id FROM objects
+                   LEFT JOIN tags
+                   WHERE tags.tag = ? and tags.id = objects.id and objects.mimeType = ?"#,
+                tag,
+                mime
+            )
+            .fetch_all(&self.db_pool)
+            .await?
+            .iter()
+            .map(|r| r.id.into())
+            .collect()
+        } else {
+            sqlx::query!(
+                "SELECT objects.id FROM objects LEFT JOIN tags WHERE tags.tag = ? and tags.id = objects.id",
+                tag
+            )
+                .fetch_all(&self.db_pool)
+                .await?
+                .iter()
+                .map(|r| r.id.into())
+                .collect()
+        };
+
+        Ok(results)
+    }
 }
 
 #[async_trait(?Send)]

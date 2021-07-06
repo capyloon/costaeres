@@ -70,15 +70,11 @@ async fn create_hierarchy(manager: &Manager) {
         let child = ObjectMetadata::new(
             i.into(),
             10.into(),
-            if i == 10 {
-                ObjectKind::Container
-            } else {
-                ObjectKind::Leaf
-            },
+            ObjectKind::Leaf,
             10,
             &format!("child #{}", i),
             "text/plain",
-            None,
+            Some(vec!["sub-child".into()]),
         );
         manager
             .create(&child, Box::new(&CONTENT[..]))
@@ -310,6 +306,9 @@ async fn search_by_name() {
 
     create_hierarchy(&manager).await;
 
+    let results = manager.by_name("unknown", Some("image/png")).await.unwrap();
+    assert_eq!(results.len(), 0);
+
     let results = manager.by_name("child #12", None).await.unwrap();
     assert_eq!(results.len(), 1);
     assert_eq!(results[0], 12.into());
@@ -319,5 +318,28 @@ async fn search_by_name() {
     assert_eq!(results[0], 12.into());
 
     let results = manager.by_name("child #12", Some("image/png")).await.unwrap();
+    assert_eq!(results.len(), 0);
+}
+
+#[async_std::test]
+async fn search_by_tag() {
+    let (config, store) = prepare_test(8).await;
+
+    let manager = Manager::new(config, Box::new(store)).await.unwrap();
+
+    create_hierarchy(&manager).await;
+
+    let results = manager.by_tag("no-such-tag", None).await.unwrap();
+    assert_eq!(results.len(), 0);
+
+    let results = manager.by_tag("sub-child", None).await.unwrap();
+    assert_eq!(results.len(), 10);
+    assert_eq!(results[0], 25.into());
+
+    let results = manager.by_tag("sub-child", Some("text/plain")).await.unwrap();
+    assert_eq!(results.len(), 10);
+    assert_eq!(results[0], 25.into());
+
+    let results = manager.by_tag("sub-child", Some("image/png")).await.unwrap();
     assert_eq!(results.len(), 0);
 }
