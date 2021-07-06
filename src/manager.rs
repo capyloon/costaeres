@@ -233,6 +233,69 @@ impl Manager {
     ) -> Result<(ObjectMetadata, Vec<ObjectMetadata>), ObjectStoreError> {
         self.get_container(ROOT_OBJECT_ID).await
     }
+
+    // Returns the whole set of object metadata from the root to the given object.
+    // Will fail if a cycle is detected or if any parent id fails to return metadata.
+    pub async fn get_full_path(
+        &self,
+        id: ObjectId,
+    ) -> Result<Vec<ObjectMetadata>, ObjectStoreError> {
+        let mut res = vec![];
+        let mut current = id;
+        let mut visited = HashSet::new();
+
+        loop {
+            if visited.contains(&current) {
+                return Err(ObjectStoreError::ObjectCycle);
+            }
+            let meta = self.get_metadata(current).await?;
+            visited.insert(current);
+            let next = meta.parent();
+            res.push(meta);
+            if current == ROOT_OBJECT_ID {
+                break;
+            }
+            current = next;
+        }
+
+        // Make sure we order elements from root -> target node.
+        res.reverse();
+        Ok(res)
+    }
+
+    // Retrieve the list of objects matching the given name, optionnaly restricted to a given mime type.
+    // TODO: pagination
+    pub async fn by_name(
+        &self,
+        name: &str,
+        mime: Option<&str>,
+    ) -> Result<Vec<ObjectId>, ObjectStoreError> {
+        if name.trim().is_empty() {
+            return Err(ObjectStoreError::Custom("EmptyNameQuery".into()));
+        }
+
+        let results: Vec<ObjectId> = if let Some(mime) = mime {
+            sqlx::query!(
+                "SELECT id FROM objects WHERE name = ? and mimeType = ?",
+                name,
+                mime
+            )
+            .fetch_all(&self.db_pool)
+            .await?
+            .iter()
+            .map(|r| r.id.into())
+            .collect()
+        } else {
+            sqlx::query!("SELECT id FROM objects WHERE name = ?", name,)
+                .fetch_all(&self.db_pool)
+                .await?
+                .iter()
+                .map(|r| r.id.into())
+                .collect()
+        };
+
+        Ok(results)
+    }
 }
 
 #[async_trait(?Send)]

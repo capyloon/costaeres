@@ -1,15 +1,18 @@
 
 CREATE TABLE IF NOT EXISTS objects
 (
-    id       INTEGER PRIMARY KEY ASC NOT NULL,
-    parent   INTEGER NOT NULL,
-    kind     INTEGER NOT NULL,
-    name     TEXT    NOT NULL,
-    mimeType TEXT    NOT NULL,
-    size     INTEGER NOT NULL,
+    id       INTEGER  PRIMARY KEY ASC NOT NULL,
+    parent   INTEGER  KEY NOT NULL,
+    kind     INTEGER  NOT NULL,
+    name     TEXT     NOT NULL,
+    mimeType TEXT     NOT NULL,
+    size     INTEGER  NOT NULL,
     created  DATETIME NOT NULL,
     modified DATETIME NOT NULL
 );
+
+CREATE INDEX IF NOT EXISTS idx_obj_mime ON objects(mimeType);
+CREATE INDEX IF NOT EXISTS idx_obj_name ON objects(name);
 
 CREATE TABLE IF NOT EXISTS tags
 (
@@ -17,3 +20,5 @@ CREATE TABLE IF NOT EXISTS tags
     tag TEXT    NOT NULL,
     FOREIGN KEY(id) REFERENCES objects(id) ON DELETE CASCADE
 );
+
+CREATE INDEX IF NOT EXISTS idx_tag_name ON tags(tag);

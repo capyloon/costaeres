@@ -6,8 +6,8 @@ use serde::{Deserialize, Serialize};
 use std::fmt;
 use thiserror::Error;
 
-#[sqlx(transparent)]
 #[derive(sqlx::Type, Copy, Clone, Debug, Deserialize, Serialize, PartialEq, Eq, Hash)]
+#[sqlx(transparent)]
 pub struct ObjectId(i64);
 
 pub static ROOT_OBJECT_ID: ObjectId = ObjectId(0);
@@ -135,6 +135,8 @@ pub enum ObjectStoreError {
     ObjectAlreadyExists,
     #[error("No Such Object")]
     NoSuchObject,
+    #[error("Object Cycle Detected")]
+    ObjectCycle,
     #[error("Custom Error: {0}")]
     Custom(String),
     #[error("Sqlx error: {0}")]
@@ -155,6 +157,7 @@ impl PartialEq for ObjectStoreError {
             (Self::Custom(error1), Self::Custom(error2)) => error1 == error2,
             (Self::ObjectAlreadyExists, Self::ObjectAlreadyExists)
             | (Self::NoSuchObject, Self::NoSuchObject)
+            | (Self::ObjectCycle, Self::ObjectCycle)
             | (Self::Sql(_), Self::Sql(_))
             | (Self::Json(_), Self::Json(_))
             | (Self::Io(_), Self::Io(_))
