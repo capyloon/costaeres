@@ -20,6 +20,7 @@ use crate::common::{
     ObjectStoreError, ROOT_OBJECT_ID,
 };
 use crate::config::Config;
+use crate::fts::Fts;
 use async_std::fs::File;
 use async_trait::async_trait;
 use bincode::Options;
@@ -31,6 +32,7 @@ use std::collections::HashSet;
 pub struct Manager {
     db_pool: SqlitePool,
     store: Box<dyn ObjectStore>,
+    fts: Fts,
 }
 
 static EMPTY_CONTENT: [u8; 0] = [0; 0];
@@ -48,7 +50,12 @@ impl Manager {
             .await
             .map_err(|err| error!("Failed to run migration: {}", err))?;
 
-        Ok(Manager { db_pool, store })
+        let fts = Fts::new(&db_pool, 5);
+        Ok(Manager {
+            db_pool,
+            store,
+            fts,
+        })
     }
 
     /// Use a existing transation to run the sql commands needed to create a metadata record.
@@ -65,7 +72,7 @@ impl Manager {
         let size = metadata.size() as i64;
         let created = metadata.created();
         let modified = metadata.modified();
-        let id = sqlx::query!(
+        sqlx::query!(
             r#"
     INSERT INTO objects ( id, parent, kind, name, mimeType, size, created, modified )
     VALUES ( ?1, ?2, ?3, ?4, ?5,?6, ?7, ?8 )
@@ -80,8 +87,7 @@ impl Manager {
             modified,
         )
         .execute(&mut tx)
-        .await?
-        .last_insert_rowid();
+        .await?;
 
         // Insert the tags.
         if let Some(tags) = metadata.tags() {
@@ -92,7 +98,10 @@ impl Manager {
             }
         }
 
-        Ok(tx)
+        // Insert the full text search data.
+        let tx2 = self.fts.add_text(id, &name, tx).await?;
+
+        Ok(tx2)
     }
 
     /// Returns `true` if this object id is in the local index.
@@ -208,9 +217,6 @@ impl Manager {
         sqlx::query!("DELETE FROM objects")
             .execute(&self.db_pool)
             .await?;
-        sqlx::query!("DELETE FROM tags")
-            .execute(&self.db_pool)
-            .await?;
 
         Ok(())
     }
@@ -322,10 +328,7 @@ impl Manager {
             .map(|r| r.id.into())
             .collect()
         } else {
-            sqlx::query!(
-                "SELECT objects.id FROM objects LEFT JOIN tags WHERE tags.tag = ? and tags.id = objects.id",
-                tag
-            )
+            sqlx::query!("SELECT id FROM tags WHERE tag = ?", tag)
                 .fetch_all(&self.db_pool)
                 .await?
                 .iter()
@@ -334,6 +337,14 @@ impl Manager {
         };
 
         Ok(results)
+    }
+
+    pub async fn by_text(&self, text: &str) -> Result<Vec<ObjectId>, ObjectStoreError> {
+        if text.trim().is_empty() {
+            return Err(ObjectStoreError::Custom("EmptyTagQuery".into()));
+        }
+
+        self.fts.search(text).await
     }
 }
 

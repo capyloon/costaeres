@@ -22,3 +22,12 @@ CREATE TABLE IF NOT EXISTS tags
 );
 
 CREATE INDEX IF NOT EXISTS idx_tag_name ON tags(tag);
+
+CREATE TABLE IF NOT EXISTS fts
+(
+    id    INTEGER KEY NOT NULL,
+    ngram TEXT    NOT NULL,
+    FOREIGN KEY(id) REFERENCES objects(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_ngram ON fts(ngram);

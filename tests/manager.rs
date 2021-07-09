@@ -102,8 +102,8 @@ async fn basic_manager() {
         Some(vec!["one".into(), "two".into()]),
     );
 
-    let res = manager.create(&meta, Box::new(&CONTENT[..])).await;
-    assert_eq!(res, Ok(()));
+    manager.create(&meta, Box::new(&CONTENT[..])).await.unwrap();
+    // assert_eq!(res, Ok(()));
 
     let res = manager.get_metadata(meta.id()).await.unwrap();
     assert_eq!(res, meta);
@@ -341,5 +341,29 @@ async fn search_by_tag() {
     assert_eq!(results[0], 25.into());
 
     let results = manager.by_tag("sub-child", Some("image/png")).await.unwrap();
+    assert_eq!(results.len(), 0);
+}
+
+#[async_std::test]
+async fn search_by_text() {
+    let (config, store) = prepare_test(9).await;
+
+    let manager = Manager::new(config, Box::new(store)).await.unwrap();
+
+    create_hierarchy(&manager).await;
+
+    let results = manager.by_text("no-match").await.unwrap();
+    assert_eq!(results.len(), 0);
+
+    let results = manager.by_text("cont").await.unwrap();
+    assert_eq!(results.len(), 1);
+
+    let results = manager.by_text("child").await.unwrap();
+    assert_eq!(results.len(), 20);
+
+    let results = manager.by_text("child #27").await.unwrap();
+    assert_eq!(results.len(), 1);
+
+    let results = manager.by_text("child #17").await.unwrap();
     assert_eq!(results.len(), 0);
 }
