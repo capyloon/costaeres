@@ -70,10 +70,10 @@ impl Manager {
         let size = metadata.size() as i64;
         let created = metadata.created();
         let modified = metadata.modified();
-        let score = metadata.db_score();
+        let scorer = metadata.db_scorer();
         sqlx::query!(
             r#"
-    INSERT INTO objects ( id, parent, kind, name, mimeType, size, created, modified, score )
+    INSERT INTO objects ( id, parent, kind, name, mimeType, size, created, modified, scorer )
     VALUES ( ?1, ?2, ?3, ?4, ?5,?6, ?7, ?8, ?9 )
             "#,
             id,
@@ -84,7 +84,7 @@ impl Manager {
             size,
             created,
             modified,
-            score,
+            scorer,
         )
         .execute(&mut tx)
         .await?;
@@ -482,7 +482,7 @@ impl ObjectManager for Manager {
 
         if let Ok(record) = sqlx::query!(
             r#"
-    SELECT id, parent, kind, name, mimeType, size, created, modified, score  FROM objects
+    SELECT id, parent, kind, name, mimeType, size, created, modified, scorer  FROM objects
     WHERE id = ?
             "#,
             id
@@ -514,7 +514,7 @@ impl ObjectManager for Manager {
 
             meta.set_created(DateTime::<Utc>::from_utc(record.created, Utc));
             meta.set_modified(DateTime::<Utc>::from_utc(record.modified, Utc));
-            meta.set_score_from_db(&record.score);
+            meta.set_scorer_from_db(&record.scorer);
 
             Ok(meta)
         } else {

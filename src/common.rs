@@ -1,5 +1,5 @@
 /// Shared traits and structs.
-use crate::scorer::{ObjectScore, VisitEntry};
+use crate::scorer::{ObjectScorer, VisitEntry};
 use async_std::io::Read;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -54,7 +54,7 @@ pub struct ObjectMetadata {
     tags: Option<Vec<String>>,
     created: DateTime<Utc>,
     modified: DateTime<Utc>,
-    score: ObjectScore,
+    scorer: ObjectScorer,
 }
 
 impl ObjectMetadata {
@@ -77,7 +77,7 @@ impl ObjectMetadata {
             tags,
             created: Utc::now(),
             modified: Utc::now(),
-            score: ObjectScore::default(),
+            scorer: ObjectScorer::default(),
         }
     }
 }
@@ -109,20 +109,21 @@ impl ObjectMetadata {
 
     // Returns a JSON representation of the score, to store in the DB.
     // TODO: consider switching to bincode?
-    pub fn db_score(&self) -> String {
-        serde_json::to_string(&self.score).unwrap_or("{}".into())
+    pub fn db_scorer(&self) -> String {
+        serde_json::to_string(&self.scorer).unwrap_or("{}".into())
     }
 
-    pub fn score(&self) -> &ObjectScore {
-        &self.score
+    pub fn scorer(&self) -> &ObjectScorer {
+        &self.scorer
     }
 
-    pub fn update_score(&mut self, entry: &VisitEntry) {
-        self.score.add(entry);
+    pub fn update_scorer(&mut self, entry: &VisitEntry) {
+        self.scorer.add(entry);
     }
 
-    pub fn set_score_from_db(&mut self, score: &str) {
-        self.score = serde_json::from_str(&score).unwrap_or_default();
+    // Set the scorer using the json serialized representation.
+    pub fn set_scorer_from_db(&mut self, scorer: &str) {
+        self.scorer = serde_json::from_str(&scorer).unwrap_or_default();
     }
 
     pub fn created(&self) -> DateTime<Utc> {

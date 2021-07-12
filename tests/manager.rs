@@ -403,12 +403,12 @@ async fn score() {
     manager.create_root().await.unwrap();
 
     let mut root_meta = manager.get_metadata(0.into()).await.unwrap();
-    assert_eq!(root_meta.score().frecency(), 0);
+    assert_eq!(root_meta.scorer().frecency(), 0);
 
     // Update the score
-    root_meta.update_score(&VisitEntry::new(&Utc::now(), VisitPriority::Normal));
+    root_meta.update_scorer(&VisitEntry::new(&Utc::now(), VisitPriority::Normal));
     manager.update(&root_meta, None).await.unwrap();
-    let initial_score = root_meta.score().frecency();
+    let initial_score = root_meta.scorer().frecency();
     assert_eq!(initial_score, 100);
 
     // Clear the database to force re-hydration.
@@ -416,5 +416,5 @@ async fn score() {
 
     // Load the root again.
     let root_meta = manager.get_metadata(0.into()).await.unwrap();
-    assert_eq!(initial_score, root_meta.score().frecency());
+    assert_eq!(initial_score, root_meta.scorer().frecency());
 }

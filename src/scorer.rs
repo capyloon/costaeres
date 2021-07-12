@@ -40,7 +40,7 @@ impl VisitEntry {
 }
 
 #[derive(Debug, Deserialize, Serialize)]
-pub struct ObjectScore {
+pub struct ObjectScorer {
     visit_count: u32,
     entries: Vec<VisitEntry>,
 }
@@ -60,7 +60,7 @@ fn weight_for(when: &DateTime<Utc>) -> u32 {
     }
 }
 
-impl Default for ObjectScore {
+impl Default for ObjectScorer {
     fn default() -> Self {
         Self {
             visit_count: 0,
@@ -69,7 +69,7 @@ impl Default for ObjectScore {
     }
 }
 
-impl ObjectScore {
+impl ObjectScorer {
     pub fn add(&mut self, entry: &VisitEntry) {
         // Remove the oldest entry to make room for the new one.
         if self.entries.len() == MAX_VISIT_ENTRIES {
@@ -98,7 +98,7 @@ impl ObjectScore {
 
     #[cfg(test)]
     pub fn max() -> u32 {
-        let mut score = ObjectScore::default();
+        let mut score = ObjectScorer::default();
         let now = Utc::now();
         for _i in 0..MAX_VISIT_ENTRIES {
             score.add(&VisitEntry::new(&now, VisitPriority::VeryHigh));
@@ -107,8 +107,8 @@ impl ObjectScore {
     }
 }
 
-impl PartialEq for ObjectScore {
-    fn eq(&self, other: &ObjectScore) -> bool {
+impl PartialEq for ObjectScorer {
+    fn eq(&self, other: &ObjectScorer) -> bool {
         self.frecency() == other.frecency()
     }
 }
@@ -117,10 +117,10 @@ impl PartialEq for ObjectScore {
 fn frecency_alg() {
     use chrono::Duration;
 
-    assert_eq!(ObjectScore::max(), 2000);
+    assert_eq!(ObjectScorer::max(), 2000);
 
     // Add 2 visits of normal priority with a 10 day interval.
-    let mut score = ObjectScore::default();
+    let mut score = ObjectScorer::default();
     assert_eq!(score.frecency(), 0);
 
     let now = Utc::now();
@@ -134,7 +134,7 @@ fn frecency_alg() {
     assert_eq!(score.frecency(), 170);
 
     // Add 2 visits with a 10 day interval, one with high priority.
-    let mut score = ObjectScore::default();
+    let mut score = ObjectScorer::default();
 
     let now = Utc::now();
     score.add(&VisitEntry::new(&now, VisitPriority::Normal));
