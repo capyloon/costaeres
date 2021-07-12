@@ -1,6 +1,6 @@
-use costaeres::file_store::*;
-use costaeres::common::*;
 use async_std::fs;
+use costaeres::common::*;
+use costaeres::file_store::*;
 
 static CONTENT: [u8; 100] = [0; 100];
 

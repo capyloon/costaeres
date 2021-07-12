@@ -313,11 +313,17 @@ async fn search_by_name() {
     assert_eq!(results.len(), 1);
     assert_eq!(results[0], 12.into());
 
-    let results = manager.by_name("child #12", Some("text/plain")).await.unwrap();
+    let results = manager
+        .by_name("child #12", Some("text/plain"))
+        .await
+        .unwrap();
     assert_eq!(results.len(), 1);
     assert_eq!(results[0], 12.into());
 
-    let results = manager.by_name("child #12", Some("image/png")).await.unwrap();
+    let results = manager
+        .by_name("child #12", Some("image/png"))
+        .await
+        .unwrap();
     assert_eq!(results.len(), 0);
 }
 
@@ -336,11 +342,17 @@ async fn search_by_tag() {
     assert_eq!(results.len(), 10);
     assert_eq!(results[0], 25.into());
 
-    let results = manager.by_tag("sub-child", Some("text/plain")).await.unwrap();
+    let results = manager
+        .by_tag("sub-child", Some("text/plain"))
+        .await
+        .unwrap();
     assert_eq!(results.len(), 10);
     assert_eq!(results[0], 25.into());
 
-    let results = manager.by_tag("sub-child", Some("image/png")).await.unwrap();
+    let results = manager
+        .by_tag("sub-child", Some("image/png"))
+        .await
+        .unwrap();
     assert_eq!(results.len(), 0);
 }
 
@@ -362,6 +374,9 @@ async fn search_by_text() {
     assert_eq!(results.len(), 20);
 
     let results = manager.by_text("child #27").await.unwrap();
+    assert_eq!(results.len(), 1);
+
+    let results = manager.by_text("child #27 #27").await.unwrap();
     assert_eq!(results.len(), 1);
 
     let results = manager.by_text("child #17").await.unwrap();
