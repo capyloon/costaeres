@@ -35,8 +35,6 @@ pub struct Manager {
     fts: Fts,
 }
 
-static EMPTY_CONTENT: [u8; 0] = [0; 0];
-
 impl Manager {
     pub async fn new(config: Config, store: Box<dyn ObjectStore>) -> Result<Self, ()> {
         let _file = File::create(&config.db_path)
@@ -72,10 +70,11 @@ impl Manager {
         let size = metadata.size() as i64;
         let created = metadata.created();
         let modified = metadata.modified();
+        let score = metadata.db_score();
         sqlx::query!(
             r#"
-    INSERT INTO objects ( id, parent, kind, name, mimeType, size, created, modified )
-    VALUES ( ?1, ?2, ?3, ?4, ?5,?6, ?7, ?8 )
+    INSERT INTO objects ( id, parent, kind, name, mimeType, size, created, modified, score )
+    VALUES ( ?1, ?2, ?3, ?4, ?5,?6, ?7, ?8, ?9 )
             "#,
             id,
             parent,
@@ -85,6 +84,7 @@ impl Manager {
             size,
             created,
             modified,
+            score,
         )
         .execute(&mut tx)
         .await?;
@@ -231,7 +231,7 @@ impl Manager {
             "inode/directory",
             None,
         );
-        self.create(&root, Box::new(&EMPTY_CONTENT[..])).await
+        self.create(&root, None).await
     }
 
     pub async fn get_root(
@@ -353,7 +353,7 @@ impl ObjectManager for Manager {
     async fn create(
         &self,
         metadata: &ObjectMetadata,
-        content: BoxedReader,
+        content: Option<BoxedReader>,
     ) -> Result<(), ObjectStoreError> {
         self.check_container_leaf(metadata.id(), metadata.parent())
             .await?;
@@ -381,7 +381,7 @@ impl ObjectManager for Manager {
     async fn update(
         &self,
         metadata: &ObjectMetadata,
-        content: BoxedReader,
+        content: Option<BoxedReader>,
     ) -> Result<(), ObjectStoreError> {
         self.check_container_leaf(metadata.id(), metadata.parent())
             .await?;
@@ -482,7 +482,7 @@ impl ObjectManager for Manager {
 
         if let Ok(record) = sqlx::query!(
             r#"
-    SELECT id, parent, kind, name, mimeType, size, created, modified  FROM objects
+    SELECT id, parent, kind, name, mimeType, size, created, modified, score  FROM objects
     WHERE id = ?
             "#,
             id
@@ -514,6 +514,7 @@ impl ObjectManager for Manager {
 
             meta.set_created(DateTime::<Utc>::from_utc(record.created, Utc));
             meta.set_modified(DateTime::<Utc>::from_utc(record.modified, Utc));
+            meta.set_score_from_db(&record.score);
 
             Ok(meta)
         } else {

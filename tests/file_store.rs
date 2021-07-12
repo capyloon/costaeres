@@ -26,7 +26,7 @@ async fn file_store() {
         Some(vec!["one".into(), "two".into()]),
     );
 
-    let res = store.create(&meta, Box::new(&CONTENT[..])).await.ok();
+    let res = store.create(&meta, Some(Box::new(&CONTENT[..]))).await.ok();
     assert_eq!(res, Some(()));
 
     // Now check that we can get it.
@@ -35,7 +35,7 @@ async fn file_store() {
     assert_eq!(&res.name(), "object 0");
 
     // Check we can't add another object with the same id.
-    let res = store.create(&meta, Box::new(&CONTENT[..])).await.err();
+    let res = store.create(&meta, Some(Box::new(&CONTENT[..]))).await.err();
     assert_eq!(res, Some(ObjectStoreError::ObjectAlreadyExists));
 
     // Update the object.
@@ -49,7 +49,7 @@ async fn file_store() {
         Some(vec!["one".into(), "two".into()]),
     );
 
-    let _ = store.update(&meta, Box::new(&CONTENT[..])).await.unwrap();
+    let _ = store.update(&meta, Some(Box::new(&CONTENT[..]))).await.unwrap();
 
     let res = store.get_full(0.into()).await.ok().unwrap().0;
     assert_eq!(res.id(), 0.into());

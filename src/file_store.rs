@@ -5,7 +5,7 @@
 use crate::common::{
     BoxedReader, ObjectId, ObjectKind, ObjectMetadata, ObjectStore, ObjectStoreError,
 };
-use async_std::{fs, fs::File, io::prelude::WriteExt};
+use async_std::{fs, fs::File, io::prelude::WriteExt, path::Path};
 use async_trait::async_trait;
 use std::path::PathBuf;
 
@@ -46,7 +46,7 @@ impl ObjectStore for FileStore {
     async fn create(
         &self,
         metadata: &ObjectMetadata,
-        content: BoxedReader,
+        content: Option<BoxedReader>,
     ) -> Result<(), ObjectStoreError> {
         // 0. TODO: check if we have enough storage available.
 
@@ -65,11 +65,13 @@ impl ObjectStore for FileStore {
         file.sync_all().await?;
 
         // 3. Store the content for leaf nodes.
-        if metadata.kind() == ObjectKind::Leaf {
-            let mut file = File::create(&content_path).await?;
-            file.set_len(metadata.size() as _).await?;
-            futures::io::copy(content, &mut file).await?;
-            file.sync_all().await?;
+        if let Some(content) = content {
+            if metadata.kind() == ObjectKind::Leaf {
+                let mut file = File::create(&content_path).await?;
+                file.set_len(metadata.size() as _).await?;
+                futures::io::copy(content, &mut file).await?;
+                file.sync_all().await?;
+            }
         }
 
         Ok(())
@@ -78,7 +80,7 @@ impl ObjectStore for FileStore {
     async fn update(
         &self,
         metadata: &ObjectMetadata,
-        content: BoxedReader,
+        content: Option<BoxedReader>,
     ) -> Result<(), ObjectStoreError> {
         self.delete(metadata.id()).await?;
         self.create(metadata, content).await?;
@@ -101,8 +103,9 @@ impl ObjectStore for FileStore {
     async fn delete(&self, id: ObjectId) -> Result<(), ObjectStoreError> {
         let (meta_path, content_path) = self.get_paths(id);
         fs::remove_file(&meta_path).await?;
-        fs::remove_file(&content_path).await?;
-
+        if Path::new(&content_path).exists().await {
+            fs::remove_file(&content_path).await?;
+        }
         Ok(())
     }
 

@@ -1,10 +1,11 @@
 /// Scorer based on the frecency algorithm
 /// See https://developer.mozilla.org/en-US/docs/Mozilla/Tech/Places/Frecency_algorithm
 use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
 
 static MAX_VISIT_ENTRIES: usize = 10;
 
-#[derive(Clone)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 
 pub enum VisitPriority {
     Normal,
@@ -23,7 +24,7 @@ impl VisitPriority {
     }
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct VisitEntry {
     timestamp: DateTime<Utc>,
     priority: VisitPriority,
@@ -38,6 +39,7 @@ impl VisitEntry {
     }
 }
 
+#[derive(Debug, Deserialize, Serialize)]
 pub struct ObjectScore {
     visit_count: u32,
     entries: Vec<VisitEntry>,
@@ -79,6 +81,10 @@ impl ObjectScore {
     }
 
     pub fn frecency(&self) -> u32 {
+        if self.entries.is_empty() {
+            return 0;
+        }
+
         // For each sampled visit, the score is (bonus / 100.0) * weight
         // The final score for each item is ceiling(total visit count * sum of points for sampled visits / number of sampled visits)
 
@@ -101,6 +107,12 @@ impl ObjectScore {
     }
 }
 
+impl PartialEq for ObjectScore {
+    fn eq(&self, other: &ObjectScore) -> bool {
+        self.frecency() == other.frecency()
+    }
+}
+
 #[test]
 fn frecency_alg() {
     use chrono::Duration;
@@ -109,6 +121,7 @@ fn frecency_alg() {
 
     // Add 2 visits of normal priority with a 10 day interval.
     let mut score = ObjectScore::default();
+    assert_eq!(score.frecency(), 0);
 
     let now = Utc::now();
     score.add(&VisitEntry::new(&now, VisitPriority::Normal));

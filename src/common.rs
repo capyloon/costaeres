@@ -1,4 +1,5 @@
 /// Shared traits and structs.
+use crate::scorer::{ObjectScore, VisitEntry};
 use async_std::io::Read;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -53,6 +54,7 @@ pub struct ObjectMetadata {
     tags: Option<Vec<String>>,
     created: DateTime<Utc>,
     modified: DateTime<Utc>,
+    score: ObjectScore,
 }
 
 impl ObjectMetadata {
@@ -75,6 +77,7 @@ impl ObjectMetadata {
             tags,
             created: Utc::now(),
             modified: Utc::now(),
+            score: ObjectScore::default(),
         }
     }
 }
@@ -102,6 +105,24 @@ impl ObjectMetadata {
 
     pub fn mime_type(&self) -> String {
         self.mime_type.clone()
+    }
+
+    // Returns a JSON representation of the score, to store in the DB.
+    // TODO: consider switching to bincode?
+    pub fn db_score(&self) -> String {
+        serde_json::to_string(&self.score).unwrap_or("{}".into())
+    }
+
+    pub fn score(&self) -> &ObjectScore {
+        &self.score
+    }
+
+    pub fn update_score(&mut self, entry: &VisitEntry) {
+        self.score.add(entry);
+    }
+
+    pub fn set_score_from_db(&mut self, score: &str) {
+        self.score = serde_json::from_str(&score).unwrap_or_default();
     }
 
     pub fn created(&self) -> DateTime<Utc> {
@@ -177,13 +198,13 @@ pub trait ObjectStore {
     async fn create(
         &self,
         metadata: &ObjectMetadata,
-        content: BoxedReader,
+        content: Option<BoxedReader>,
     ) -> Result<(), ObjectStoreError>;
 
     async fn update(
         &self,
         metadata: &ObjectMetadata,
-        content: BoxedReader,
+        content: Option<BoxedReader>,
     ) -> Result<(), ObjectStoreError>;
 
     async fn update_content_from_slice(
@@ -210,13 +231,13 @@ pub trait ObjectManager {
     async fn create(
         &self,
         metadata: &ObjectMetadata,
-        content: BoxedReader,
+        content: Option<BoxedReader>,
     ) -> Result<(), ObjectStoreError>;
 
     async fn update(
         &self,
         metadata: &ObjectMetadata,
-        content: BoxedReader,
+        content: Option<BoxedReader>,
     ) -> Result<(), ObjectStoreError>;
 
     async fn delete(&self, id: ObjectId) -> Result<(), ObjectStoreError>;

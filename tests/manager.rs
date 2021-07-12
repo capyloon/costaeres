@@ -1,8 +1,10 @@
 use async_std::fs;
+use chrono::Utc;
 use costaeres::common::*;
 use costaeres::config::Config;
 use costaeres::file_store::FileStore;
 use costaeres::manager::*;
+use costaeres::scorer::{VisitEntry, VisitPriority};
 
 static CONTENT: [u8; 100] = [0; 100];
 
@@ -40,7 +42,7 @@ async fn create_hierarchy(manager: &Manager) {
         None,
     );
     manager
-        .create(&container, Box::new(&CONTENT[..]))
+        .create(&container, Some(Box::new(&CONTENT[..])))
         .await
         .unwrap();
 
@@ -60,7 +62,7 @@ async fn create_hierarchy(manager: &Manager) {
             None,
         );
         manager
-            .create(&child, Box::new(&CONTENT[..]))
+            .create(&child, Some(Box::new(&CONTENT[..])))
             .await
             .unwrap();
     }
@@ -77,7 +79,7 @@ async fn create_hierarchy(manager: &Manager) {
             Some(vec!["sub-child".into()]),
         );
         manager
-            .create(&child, Box::new(&CONTENT[..]))
+            .create(&child, Some(Box::new(&CONTENT[..])))
             .await
             .unwrap();
     }
@@ -102,7 +104,10 @@ async fn basic_manager() {
         Some(vec!["one".into(), "two".into()]),
     );
 
-    manager.create(&meta, Box::new(&CONTENT[..])).await.unwrap();
+    manager
+        .create(&meta, Some(Box::new(&CONTENT[..])))
+        .await
+        .unwrap();
     // assert_eq!(res, Ok(()));
 
     let res = manager.get_metadata(meta.id()).await.unwrap();
@@ -122,7 +127,7 @@ async fn basic_manager() {
         "text/plain",
         Some(vec!["one".into(), "two".into(), "three".into()]),
     );
-    let res = manager.update(&meta, Box::new(&CONTENT[..])).await;
+    let res = manager.update(&meta, Some(Box::new(&CONTENT[..]))).await;
     assert_eq!(res, Ok(()));
 
     // Verify the updated metadata.
@@ -152,7 +157,10 @@ async fn rehydrate_single() {
         "text/plain",
         Some(vec!["one".into(), "two".into()]),
     );
-    store.create(&meta, Box::new(&CONTENT[..])).await.unwrap();
+    store
+        .create(&meta, Some(Box::new(&CONTENT[..])))
+        .await
+        .unwrap();
 
     let manager = Manager::new(config, Box::new(store)).await.unwrap();
 
@@ -181,7 +189,7 @@ async fn check_constraints() {
     let manager = Manager::new(config, Box::new(store)).await.unwrap();
 
     // Fail to store an object where both id and parent are 1
-    let res = manager.create(&meta, Box::new(&CONTENT[..])).await;
+    let res = manager.create(&meta, Some(Box::new(&CONTENT[..]))).await;
     assert_eq!(res, Err(ObjectStoreError::InvalidContainerId));
 
     // Fail to store an object if the parent doesn't exist.
@@ -194,7 +202,9 @@ async fn check_constraints() {
         "text/plain",
         None,
     );
-    let res = manager.create(&leaf_meta, Box::new(&CONTENT[..])).await;
+    let res = manager
+        .create(&leaf_meta, Some(Box::new(&CONTENT[..])))
+        .await;
     assert_eq!(res, Err(ObjectStoreError::InvalidContainerId));
 
     // Create the root
@@ -208,13 +218,13 @@ async fn check_constraints() {
         None,
     );
     manager
-        .create(&root_meta, Box::new(&CONTENT[..]))
+        .create(&root_meta, Some(Box::new(&CONTENT[..])))
         .await
         .unwrap();
 
     // And now add the leaf.
     manager
-        .create(&leaf_meta, Box::new(&CONTENT[..]))
+        .create(&leaf_meta, Some(Box::new(&CONTENT[..])))
         .await
         .unwrap();
 
@@ -228,7 +238,9 @@ async fn check_constraints() {
         "text/plain",
         None,
     );
-    let res = manager.create(&leaf_meta, Box::new(&CONTENT[..])).await;
+    let res = manager
+        .create(&leaf_meta, Some(Box::new(&CONTENT[..])))
+        .await;
     assert_eq!(res, Err(ObjectStoreError::InvalidContainerId));
 }
 
@@ -381,4 +393,28 @@ async fn search_by_text() {
 
     let results = manager.by_text("child #17").await.unwrap();
     assert_eq!(results.len(), 0);
+}
+
+#[async_std::test]
+async fn score() {
+    let (config, store) = prepare_test(10).await;
+
+    let manager = Manager::new(config, Box::new(store)).await.unwrap();
+    manager.create_root().await.unwrap();
+
+    let mut root_meta = manager.get_metadata(0.into()).await.unwrap();
+    assert_eq!(root_meta.score().frecency(), 0);
+
+    // Update the score
+    root_meta.update_score(&VisitEntry::new(&Utc::now(), VisitPriority::Normal));
+    manager.update(&root_meta, None).await.unwrap();
+    let initial_score = root_meta.score().frecency();
+    assert_eq!(initial_score, 100);
+
+    // Clear the database to force re-hydration.
+    manager.clear().await.unwrap();
+
+    // Load the root again.
+    let root_meta = manager.get_metadata(0.into()).await.unwrap();
+    assert_eq!(initial_score, root_meta.score().frecency());
 }

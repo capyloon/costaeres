@@ -8,7 +8,8 @@ CREATE TABLE IF NOT EXISTS objects
     mimeType TEXT     NOT NULL,
     size     INTEGER  NOT NULL,
     created  DATETIME NOT NULL,
-    modified DATETIME NOT NULL
+    modified DATETIME NOT NULL,
+    score    TEXT     NOT NULL
 );
 
 CREATE INDEX IF NOT EXISTS idx_obj_mime ON objects(mimeType);
