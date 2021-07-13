@@ -4,12 +4,13 @@ CREATE TABLE IF NOT EXISTS objects
     id       INTEGER  PRIMARY KEY ASC NOT NULL,
     parent   INTEGER  KEY NOT NULL,
     kind     INTEGER  NOT NULL,
-    name     TEXT     NOT NULL,
-    mimeType TEXT     NOT NULL,
+    name     TEXT     KEY NOT NULL,
+    mimeType TEXT     KEY NOT NULL,
     size     INTEGER  NOT NULL,
     created  DATETIME NOT NULL,
     modified DATETIME NOT NULL,
-    scorer   TEXT     NOT NULL
+    scorer   TEXT     NOT NULL,
+    frecency INTEGER  DEFAULT 0
 );
 
 CREATE INDEX IF NOT EXISTS idx_obj_mime ON objects(mimeType);

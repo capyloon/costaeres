@@ -39,9 +39,10 @@ impl Fts {
     }
 
     // Return objects that have a match for all tokens
-    pub async fn search(&self, text: &str) -> Result<Vec<ObjectId>, ObjectStoreError> {
+    pub async fn search(&self, text: &str) -> Result<Vec<(ObjectId, u32)>, ObjectStoreError> {
         let mut tx = self.db_pool.begin().await?;
-        let mut res: HashMap<ObjectId, usize> = HashMap::new();
+        // Map ObjectId -> (ngram matches, frecency)
+        let mut res: HashMap<ObjectId, (usize, u32)> = HashMap::new();
 
         let words = preprocess_text(text);
 
@@ -51,19 +52,35 @@ impl Fts {
                 word = word[0..self.max_substring_len].to_owned();
             }
 
-            sqlx::query!("SELECT id FROM fts WHERE ngram = ?", word)
-                .fetch_all(&mut tx)
-                .await?
-                .iter()
-                .for_each(|r| {
-                    res.entry(r.id.into()).and_modify(|e| *e += 1).or_insert(1);
-                });
+            sqlx::query!(
+                r#"SELECT objects.id, objects.frecency FROM objects
+            LEFT JOIN fts
+            WHERE fts.ngram = ? and fts.id = objects.id"#,
+                word
+            )
+            // sqlx::query!("SELECT id FROM fts WHERE ngram = ?", word)
+            .fetch_all(&mut tx)
+            .await?
+            .iter()
+            .for_each(|r| {
+                res.entry(r.id.into())
+                    .and_modify(|e| (*e).0 += 1)
+                    .or_insert((1, r.frecency.unwrap_or(0) as _));
+            });
         }
 
-        Ok(res
+        let mut matches: Vec<(ObjectId, u32)> = res
             .iter()
-            .filter_map(|item| if *item.1 == len { Some(*item.0) } else { None })
-            .collect())
+            .filter_map(|item| {
+                if item.1 .0 == len {
+                    Some((*item.0, item.1 .1))
+                } else {
+                    None
+                }
+            })
+            .collect();
+        matches.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
+        Ok(matches)
     }
 }
 

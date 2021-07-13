@@ -71,10 +71,11 @@ impl Manager {
         let created = metadata.created();
         let modified = metadata.modified();
         let scorer = metadata.db_scorer();
+        let frecency = metadata.scorer().frecency();
         sqlx::query!(
             r#"
-    INSERT INTO objects ( id, parent, kind, name, mimeType, size, created, modified, scorer )
-    VALUES ( ?1, ?2, ?3, ?4, ?5,?6, ?7, ?8, ?9 )
+    INSERT INTO objects ( id, parent, kind, name, mimeType, size, created, modified, scorer, frecency )
+    VALUES ( ?, ?, ?, ?, ?, ?, ?, ?, ?, ? )
             "#,
             id,
             parent,
@@ -85,6 +86,7 @@ impl Manager {
             created,
             modified,
             scorer,
+            frecency,
         )
         .execute(&mut tx)
         .await?;
@@ -282,7 +284,7 @@ impl Manager {
 
         let results: Vec<ObjectId> = if let Some(mime) = mime {
             sqlx::query!(
-                "SELECT id FROM objects WHERE name = ? and mimeType = ?",
+                "SELECT id FROM objects WHERE name = ? and mimeType = ? ORDER BY frecency DESC",
                 name,
                 mime
             )
@@ -292,7 +294,7 @@ impl Manager {
             .map(|r| r.id.into())
             .collect()
         } else {
-            sqlx::query!("SELECT id FROM objects WHERE name = ?", name,)
+            sqlx::query!("SELECT id FROM objects WHERE name = ? ORDER BY frecency DESC", name,)
                 .fetch_all(&self.db_pool)
                 .await?
                 .iter()
@@ -318,7 +320,8 @@ impl Manager {
             sqlx::query!(
                 r#"SELECT objects.id FROM objects
                    LEFT JOIN tags
-                   WHERE tags.tag = ? and tags.id = objects.id and objects.mimeType = ?"#,
+                   WHERE tags.tag = ? and tags.id = objects.id and objects.mimeType = ?
+                   ORDER BY frecency DESC"#,
                 tag,
                 mime
             )
@@ -328,7 +331,10 @@ impl Manager {
             .map(|r| r.id.into())
             .collect()
         } else {
-            sqlx::query!("SELECT id FROM tags WHERE tag = ?", tag)
+            sqlx::query!(r#"SELECT objects.id FROM objects
+            LEFT JOIN tags
+            WHERE tags.tag = ? and tags.id = objects.id
+            ORDER BY frecency DESC"#, tag)
                 .fetch_all(&self.db_pool)
                 .await?
                 .iter()
@@ -339,7 +345,7 @@ impl Manager {
         Ok(results)
     }
 
-    pub async fn by_text(&self, text: &str) -> Result<Vec<ObjectId>, ObjectStoreError> {
+    pub async fn by_text(&self, text: &str) -> Result<Vec<(ObjectId, u32)>, ObjectStoreError> {
         if text.trim().is_empty() {
             return Err(ObjectStoreError::Custom("EmptyTagQuery".into()));
         }
