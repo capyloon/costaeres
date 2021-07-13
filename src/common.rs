@@ -110,7 +110,7 @@ impl ObjectMetadata {
     // Returns a JSON representation of the score, to store in the DB.
     // TODO: consider switching to bincode?
     pub fn db_scorer(&self) -> String {
-        serde_json::to_string(&self.scorer).unwrap_or("{}".into())
+        serde_json::to_string(&self.scorer).unwrap_or_else(|_| "{}".into())
     }
 
     pub fn scorer(&self) -> &ObjectScorer {
