@@ -418,3 +418,25 @@ async fn score() {
     let root_meta = manager.get_metadata(0.into()).await.unwrap();
     assert_eq!(initial_score, root_meta.scorer().frecency());
 }
+
+#[async_std::test]
+async fn top_frecency() {
+    let (config, store) = prepare_test(11).await;
+
+    let manager = Manager::new(config, Box::new(store)).await.unwrap();
+
+    create_hierarchy(&manager).await;
+
+    let mut root_meta = manager.get_metadata(0.into()).await.unwrap();
+    assert_eq!(root_meta.scorer().frecency(), 0);
+
+    // Update the score
+    root_meta.update_scorer(&VisitEntry::new(&Utc::now(), VisitPriority::Normal));
+    manager.update(&root_meta, None).await.unwrap();
+    assert_eq!(root_meta.scorer().frecency(), 100);
+
+    let results = manager.top_by_frecency(10).await.unwrap();
+    assert_eq!(results.len(), 10);
+    let first = results[0];
+    assert_eq!(first, (0.into(), 100));
+}

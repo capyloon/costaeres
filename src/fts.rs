@@ -65,7 +65,7 @@ impl Fts {
             .for_each(|r| {
                 res.entry(r.id.into())
                     .and_modify(|e| (*e).0 += 1)
-                    .or_insert((1, r.frecency.unwrap_or(0) as _));
+                    .or_insert((1, r.frecency as _));
             });
         }
 

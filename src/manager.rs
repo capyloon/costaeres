@@ -294,12 +294,15 @@ impl Manager {
             .map(|r| r.id.into())
             .collect()
         } else {
-            sqlx::query!("SELECT id FROM objects WHERE name = ? ORDER BY frecency DESC", name,)
-                .fetch_all(&self.db_pool)
-                .await?
-                .iter()
-                .map(|r| r.id.into())
-                .collect()
+            sqlx::query!(
+                "SELECT id FROM objects WHERE name = ? ORDER BY frecency DESC",
+                name,
+            )
+            .fetch_all(&self.db_pool)
+            .await?
+            .iter()
+            .map(|r| r.id.into())
+            .collect()
         };
 
         Ok(results)
@@ -331,15 +334,18 @@ impl Manager {
             .map(|r| r.id.into())
             .collect()
         } else {
-            sqlx::query!(r#"SELECT objects.id FROM objects
+            sqlx::query!(
+                r#"SELECT objects.id FROM objects
             LEFT JOIN tags
             WHERE tags.tag = ? and tags.id = objects.id
-            ORDER BY frecency DESC"#, tag)
-                .fetch_all(&self.db_pool)
-                .await?
-                .iter()
-                .map(|r| r.id.into())
-                .collect()
+            ORDER BY frecency DESC"#,
+                tag
+            )
+            .fetch_all(&self.db_pool)
+            .await?
+            .iter()
+            .map(|r| r.id.into())
+            .collect()
         };
 
         Ok(results)
@@ -347,10 +353,31 @@ impl Manager {
 
     pub async fn by_text(&self, text: &str) -> Result<Vec<(ObjectId, u32)>, ObjectStoreError> {
         if text.trim().is_empty() {
-            return Err(ObjectStoreError::Custom("EmptyTagQuery".into()));
+            return Err(ObjectStoreError::Custom("EmptyTextQuery".into()));
         }
 
         self.fts.search(text).await
+    }
+
+    pub async fn top_by_frecency(
+        &self,
+        count: u32,
+    ) -> Result<Vec<(ObjectId, u32)>, ObjectStoreError> {
+        if count == 0 {
+            return Err(ObjectStoreError::Custom("ZeroCountQuery".into()));
+        }
+
+        let results: Vec<(ObjectId, u32)> = sqlx::query!(
+            "SELECT id, frecency FROM objects ORDER BY frecency DESC LIMIT ?",
+            count,
+        )
+        .fetch_all(&self.db_pool)
+        .await?
+        .iter()
+        .map(|r| (r.id.into(), r.frecency as u32))
+        .collect();
+
+        Ok(results)
     }
 }
 
