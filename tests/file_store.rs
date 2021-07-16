@@ -2,7 +2,10 @@ use async_std::fs;
 use costaeres::common::*;
 use costaeres::file_store::*;
 
-static CONTENT: [u8; 100] = [0; 100];
+async fn create_content() -> BoxedReader {
+    let file = fs::File::open("./create_db.sh").await.unwrap();
+    Box::new(file)
+}
 
 #[async_std::test]
 async fn file_store() {
@@ -26,7 +29,7 @@ async fn file_store() {
         Some(vec!["one".into(), "two".into()]),
     );
 
-    let res = store.create(&meta, Some(Box::new(&CONTENT[..]))).await.ok();
+    let res = store.create(&meta, Some(create_content().await)).await.ok();
     assert_eq!(res, Some(()));
 
     // Now check that we can get it.
@@ -35,7 +38,10 @@ async fn file_store() {
     assert_eq!(&res.name(), "object 0");
 
     // Check we can't add another object with the same id.
-    let res = store.create(&meta, Some(Box::new(&CONTENT[..]))).await.err();
+    let res = store
+        .create(&meta, Some(create_content().await))
+        .await
+        .err();
     assert_eq!(res, Some(ObjectStoreError::ObjectAlreadyExists));
 
     // Update the object.
@@ -49,7 +55,10 @@ async fn file_store() {
         Some(vec!["one".into(), "two".into()]),
     );
 
-    let _ = store.update(&meta, Some(Box::new(&CONTENT[..]))).await.unwrap();
+    let _ = store
+        .update(&meta, Some(create_content().await))
+        .await
+        .unwrap();
 
     let res = store.get_full(0.into()).await.ok().unwrap().0;
     assert_eq!(res.id(), 0.into());

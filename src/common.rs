@@ -1,15 +1,18 @@
 /// Shared traits and structs.
 use crate::scorer::{ObjectScorer, VisitEntry};
-use async_std::io::Read;
+use async_std::io::{Read, Seek};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use sqlx::{Sqlite, Transaction};
 use std::fmt;
 use thiserror::Error;
 
 #[derive(sqlx::Type, Copy, Clone, Debug, Deserialize, Serialize, PartialEq, Eq, Hash)]
 #[sqlx(transparent)]
 pub struct ObjectId(i64);
+
+pub type TransactionResult<'c> = Result<Transaction<'c, Sqlite>, ObjectStoreError>;
 
 pub static ROOT_OBJECT_ID: ObjectId = ObjectId(0);
 
@@ -190,7 +193,11 @@ impl PartialEq for ObjectStoreError {
     }
 }
 
-pub type BoxedReader = Box<dyn Read + Unpin>;
+pub trait ReaderTrait: Read + Seek {}
+
+impl ReaderTrait for async_std::fs::File {}
+
+pub type BoxedReader = Box<dyn ReaderTrait + Unpin>;
 
 // Operations needed for an object store.
 // These are all async operations.
@@ -232,13 +239,13 @@ pub trait ObjectManager {
     async fn create(
         &self,
         metadata: &ObjectMetadata,
-        content: Option<BoxedReader>,
+        mut content: Option<BoxedReader>,
     ) -> Result<(), ObjectStoreError>;
 
     async fn update(
         &self,
         metadata: &ObjectMetadata,
-        content: Option<BoxedReader>,
+        mut content: Option<BoxedReader>,
     ) -> Result<(), ObjectStoreError>;
 
     async fn delete(&self, id: ObjectId) -> Result<(), ObjectStoreError>;

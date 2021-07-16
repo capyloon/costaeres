@@ -17,22 +17,24 @@
 /// to preserve the consistency between both sides.
 use crate::common::{
     BoxedReader, ObjectId, ObjectKind, ObjectManager, ObjectMetadata, ObjectStore,
-    ObjectStoreError, ROOT_OBJECT_ID,
+    ObjectStoreError, TransactionResult, ROOT_OBJECT_ID,
 };
 use crate::config::Config;
 use crate::fts::Fts;
+use crate::indexer::Indexer;
 use async_std::fs::File;
 use async_trait::async_trait;
 use bincode::Options;
 use chrono::{DateTime, Utc};
 use log::{debug, error};
 use sqlx::{Sqlite, SqlitePool, Transaction};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 pub struct Manager {
     db_pool: SqlitePool,
     store: Box<dyn ObjectStore>,
     fts: Fts,
+    indexers: HashMap<String, Box<dyn Indexer>>, // Maps a content-type to an indexer.
 }
 
 impl Manager {
@@ -53,6 +55,7 @@ impl Manager {
             db_pool,
             store,
             fts,
+            indexers: HashMap::new(),
         })
     }
 
@@ -61,7 +64,7 @@ impl Manager {
         &self,
         metadata: &ObjectMetadata,
         mut tx: Transaction<'c, Sqlite>,
-    ) -> Result<Transaction<'c, Sqlite>, ObjectStoreError> {
+    ) -> TransactionResult<'c> {
         let id = metadata.id();
         let parent = metadata.parent();
         let kind = metadata.kind();
@@ -379,6 +382,29 @@ impl Manager {
 
         Ok(results)
     }
+
+    pub async fn update_text_index<'c>(
+        &'c self,
+        metadata: &'c ObjectMetadata,
+        content: &mut BoxedReader,
+        mut tx: Transaction<'c, Sqlite>,
+    ) -> TransactionResult<'c> {
+        if metadata.kind() == ObjectKind::Container {
+            return Ok(tx);
+        }
+
+        if let Some(indexer) = self.indexers.get(&metadata.mime_type()) {
+            tx = indexer.index(metadata.id(), content, &self.fts, tx).await?
+        } else {
+            debug!("No indexer available for {}", metadata.mime_type());
+        }
+
+        Ok(tx)
+    }
+
+    pub fn add_indexer(&mut self, mime_type: &str, indexer: Box<dyn Indexer>) {
+        let _ = self.indexers.insert(mime_type.into(), indexer);
+    }
 }
 
 #[async_trait(?Send)]
@@ -386,7 +412,7 @@ impl ObjectManager for Manager {
     async fn create(
         &self,
         metadata: &ObjectMetadata,
-        content: Option<BoxedReader>,
+        mut content: Option<BoxedReader>,
     ) -> Result<(), ObjectStoreError> {
         self.check_container_leaf(metadata.id(), metadata.parent())
             .await?;
@@ -401,10 +427,17 @@ impl ObjectManager for Manager {
                 .await?;
         }
 
+        // If there is content run the text indexer for this mime type.
+        let tx3 = if let Some(ref mut content) = content {
+            self.update_text_index(&metadata, content, tx2).await?
+        } else {
+            tx2
+        };
+
         // Create the store entry, and commit the SQlite transaction in case of success.
         match self.store.create(metadata, content).await {
             Ok(_) => {
-                tx2.commit().await?;
+                tx3.commit().await?;
                 Ok(())
             }
             Err(err) => Err(err),
@@ -414,7 +447,7 @@ impl ObjectManager for Manager {
     async fn update(
         &self,
         metadata: &ObjectMetadata,
-        content: Option<BoxedReader>,
+        mut content: Option<BoxedReader>,
     ) -> Result<(), ObjectStoreError> {
         self.check_container_leaf(metadata.id(), metadata.parent())
             .await?;
@@ -433,9 +466,16 @@ impl ObjectManager for Manager {
                 .await?;
         }
 
+        // If there is content, run the text indexer for this mime type.
+        let tx3 = if let Some(ref mut content) = content {
+            self.update_text_index(&metadata, content, tx2).await?
+        } else {
+            tx2
+        };
+
         match self.store.update(metadata, content).await {
             Ok(_) => {
-                tx2.commit().await?;
+                tx3.commit().await?;
                 Ok(())
             }
             Err(err) => Err(err),

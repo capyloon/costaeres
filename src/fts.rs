@@ -30,7 +30,7 @@ impl Fts {
         let ngrams = ngrams(text, self.max_substring_len);
         // let mut tx = self.db_pool.begin().await?;
         for ngram in ngrams {
-            sqlx::query!("INSERT INTO fts ( id, ngram ) VALUES ( ?1, ?2 )", id, ngram)
+            sqlx::query!("INSERT OR IGNORE INTO fts ( id, ngram ) VALUES ( ?1, ?2 )", id, ngram)
                 .execute(&mut tx)
                 .await?;
         }
@@ -58,7 +58,6 @@ impl Fts {
             WHERE fts.ngram = ? and fts.id = objects.id"#,
                 word
             )
-            // sqlx::query!("SELECT id FROM fts WHERE ngram = ?", word)
             .fetch_all(&mut tx)
             .await?
             .iter()

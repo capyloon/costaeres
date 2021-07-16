@@ -30,6 +30,7 @@ CREATE TABLE IF NOT EXISTS fts
     id    INTEGER KEY NOT NULL,
     ngram TEXT    NOT NULL,
     FOREIGN KEY(id) REFERENCES objects(id) ON DELETE CASCADE
+    UNIQUE(id, ngram)
 );
 
 CREATE INDEX IF NOT EXISTS idx_ngram ON fts(ngram);

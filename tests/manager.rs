@@ -3,10 +3,14 @@ use chrono::Utc;
 use costaeres::common::*;
 use costaeres::config::Config;
 use costaeres::file_store::FileStore;
+use costaeres::indexer::*;
 use costaeres::manager::*;
 use costaeres::scorer::{VisitEntry, VisitPriority};
 
-static CONTENT: [u8; 100] = [0; 100];
+async fn create_content() -> BoxedReader {
+    let file = fs::File::open("./create_db.sh").await.unwrap();
+    Box::new(file)
+}
 
 // Prepare a test directory, and returns the matching config and file store.
 async fn prepare_test(index: u32) -> (Config, FileStore) {
@@ -42,7 +46,7 @@ async fn create_hierarchy(manager: &Manager) {
         None,
     );
     manager
-        .create(&container, Some(Box::new(&CONTENT[..])))
+        .create(&container, Some(create_content().await))
         .await
         .unwrap();
 
@@ -62,7 +66,7 @@ async fn create_hierarchy(manager: &Manager) {
             None,
         );
         manager
-            .create(&child, Some(Box::new(&CONTENT[..])))
+            .create(&child, Some(create_content().await))
             .await
             .unwrap();
     }
@@ -79,7 +83,7 @@ async fn create_hierarchy(manager: &Manager) {
             Some(vec!["sub-child".into()]),
         );
         manager
-            .create(&child, Some(Box::new(&CONTENT[..])))
+            .create(&child, Some(create_content().await))
             .await
             .unwrap();
     }
@@ -105,7 +109,7 @@ async fn basic_manager() {
     );
 
     manager
-        .create(&meta, Some(Box::new(&CONTENT[..])))
+        .create(&meta, Some(create_content().await))
         .await
         .unwrap();
     // assert_eq!(res, Ok(()));
@@ -127,7 +131,7 @@ async fn basic_manager() {
         "text/plain",
         Some(vec!["one".into(), "two".into(), "three".into()]),
     );
-    let res = manager.update(&meta, Some(Box::new(&CONTENT[..]))).await;
+    let res = manager.update(&meta, Some(create_content().await)).await;
     assert_eq!(res, Ok(()));
 
     // Verify the updated metadata.
@@ -158,7 +162,7 @@ async fn rehydrate_single() {
         Some(vec!["one".into(), "two".into()]),
     );
     store
-        .create(&meta, Some(Box::new(&CONTENT[..])))
+        .create(&meta, Some(create_content().await))
         .await
         .unwrap();
 
@@ -189,7 +193,7 @@ async fn check_constraints() {
     let manager = Manager::new(config, Box::new(store)).await.unwrap();
 
     // Fail to store an object where both id and parent are 1
-    let res = manager.create(&meta, Some(Box::new(&CONTENT[..]))).await;
+    let res = manager.create(&meta, Some(create_content().await)).await;
     assert_eq!(res, Err(ObjectStoreError::InvalidContainerId));
 
     // Fail to store an object if the parent doesn't exist.
@@ -203,7 +207,7 @@ async fn check_constraints() {
         None,
     );
     let res = manager
-        .create(&leaf_meta, Some(Box::new(&CONTENT[..])))
+        .create(&leaf_meta, Some(create_content().await))
         .await;
     assert_eq!(res, Err(ObjectStoreError::InvalidContainerId));
 
@@ -218,13 +222,13 @@ async fn check_constraints() {
         None,
     );
     manager
-        .create(&root_meta, Some(Box::new(&CONTENT[..])))
+        .create(&root_meta, Some(create_content().await))
         .await
         .unwrap();
 
     // And now add the leaf.
     manager
-        .create(&leaf_meta, Some(Box::new(&CONTENT[..])))
+        .create(&leaf_meta, Some(create_content().await))
         .await
         .unwrap();
 
@@ -239,7 +243,7 @@ async fn check_constraints() {
         None,
     );
     let res = manager
-        .create(&leaf_meta, Some(Box::new(&CONTENT[..])))
+        .create(&leaf_meta, Some(create_content().await))
         .await;
     assert_eq!(res, Err(ObjectStoreError::InvalidContainerId));
 }
@@ -439,4 +443,75 @@ async fn top_frecency() {
     assert_eq!(results.len(), 10);
     let first = results[0];
     assert_eq!(first, (0.into(), 100));
+}
+
+#[async_std::test]
+async fn index_places() {
+    let (config, store) = prepare_test(12).await;
+
+    let mut manager = Manager::new(config, Box::new(store)).await.unwrap();
+    manager.add_indexer(
+        "application/x-places+json",
+        Box::new(create_places_indexer()),
+    );
+
+    manager.create_root().await.unwrap();
+    let leaf_meta = ObjectMetadata::new(
+        1.into(),
+        0.into(),
+        ObjectKind::Leaf,
+        10,
+        "ecdf525a-e5d6-11eb-9c9b-d3fd1d0ea335",
+        "application/x-places+json",
+        None,
+    );
+
+    let places1 = fs::File::open("./test-fixtures/places-1.json")
+        .await
+        .unwrap();
+
+    manager
+        .create(&leaf_meta, Some(Box::new(places1)))
+        .await
+        .unwrap();
+
+    // Found in the url.
+    let results = manager.by_text("example").await.unwrap();
+    assert_eq!(results.len(), 1);
+
+    // Found in the title.
+    let results = manager.by_text("web").await.unwrap();
+    assert_eq!(results.len(), 1);
+
+    // Update the object with new content.
+    let places2 = fs::File::open("./test-fixtures/places-2.json")
+        .await
+        .unwrap();
+    manager
+        .update(&leaf_meta, Some(Box::new(places2)))
+        .await
+        .unwrap();
+
+    // Found in the url.
+    let results = manager.by_text("example").await.unwrap();
+    assert_eq!(results.len(), 1);
+
+    // Not found in the title anymore.
+    let results = manager.by_text("web").await.unwrap();
+    assert_eq!(results.len(), 0);
+
+    // Found in the new title.
+    let results = manager.by_text("new").await.unwrap();
+    assert_eq!(results.len(), 1);
+
+    // Delete the object, removing the associated text index.
+    manager.delete(leaf_meta.id()).await.unwrap();
+
+    // Used to be found in the url.
+    let results = manager.by_text("example").await.unwrap();
+    assert_eq!(results.len(), 0);
+
+    // Used to be found in the title.
+    let results = manager.by_text("new").await.unwrap();
+    assert_eq!(results.len(), 0);
 }
