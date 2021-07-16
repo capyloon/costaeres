@@ -515,3 +515,50 @@ async fn index_places() {
     let results = manager.by_text("new").await.unwrap();
     assert_eq!(results.len(), 0);
 }
+
+#[async_std::test]
+async fn index_contacts() {
+    let (config, store) = prepare_test(13).await;
+
+    let mut manager = Manager::new(config, Box::new(store)).await.unwrap();
+    manager.add_indexer(
+        "application/x-contacts+json",
+        Box::new(create_contacts_indexer()),
+    );
+
+    manager.create_root().await.unwrap();
+    let leaf_meta = ObjectMetadata::new(
+        1.into(),
+        0.into(),
+        ObjectKind::Leaf,
+        10,
+        "ecdf525a-e5d6-11eb-9c9b-d3fd1d0ea335",
+        "application/x-contacts+json",
+        None,
+    );
+
+    let places1 = fs::File::open("./test-fixtures/contacts-1.json")
+        .await
+        .unwrap();
+
+    manager
+        .create(&leaf_meta, Some(Box::new(places1)))
+        .await
+        .unwrap();
+
+    // Found in the name.
+    let results = manager.by_text("jean").await.unwrap();
+    assert_eq!(results.len(), 1);
+
+    // Found in the phone number.
+    let results = manager.by_text("4567").await.unwrap();
+    assert_eq!(results.len(), 1);
+
+    // Found in the name and email.
+    let results = manager.by_text("dupont").await.unwrap();
+    assert_eq!(results.len(), 1);
+
+    // Found in the email.
+    let results = manager.by_text("secret").await.unwrap();
+    assert_eq!(results.len(), 1);
+}

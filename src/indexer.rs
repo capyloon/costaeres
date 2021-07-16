@@ -19,6 +19,7 @@ pub trait Indexer {
 }
 
 // A generic indexer for flat Json data structures.
+// Indexed properties are strings and string arrays members.
 pub struct FlatJsonIndexer {
     fields: Vec<String>,
 }
@@ -48,8 +49,18 @@ impl Indexer for FlatJsonIndexer {
 
         // 2. Index each available field.
         for field in &self.fields {
-            if let Some(Value::String(text)) = v.get(field) {
-                tx = fts.add_text(id, text, tx).await?;
+            match v.get(field) {
+                Some(Value::String(text)) => {
+                    tx = fts.add_text(id, text, tx).await?;
+                }
+                Some(Value::Array(array)) => {
+                    for item in array {
+                        if let Value::String(text) = item {
+                            tx = fts.add_text(id, text, tx).await?;
+                        }
+                    }
+                }
+                _ => {}
             }
         }
 
@@ -57,9 +68,16 @@ impl Indexer for FlatJsonIndexer {
     }
 }
 
-// Indexer for the content of a "Places" record.
+// Indexer for the content of a "Places" object.
 // This is a json value with the following format:
 // { url: "...", title: "...", icon: "..." }
 pub fn create_places_indexer() -> FlatJsonIndexer {
     FlatJsonIndexer::new(&["url", "title"])
+}
+
+// Indexer for the content of a "Contacts" object.
+// This is a json value with the following format:
+// { name: "...", phone: "[...]", email: "[...]" }
+pub fn create_contacts_indexer() -> FlatJsonIndexer {
+    FlatJsonIndexer::new(&["name", "phone", "email"])
 }
