@@ -562,3 +562,21 @@ async fn index_contacts() {
     let results = manager.by_text("secret").await.unwrap();
     assert_eq!(results.len(), 1);
 }
+
+#[async_std::test]
+async fn id_generation() {
+    let (config, store) = prepare_test(14).await;
+
+    let manager = Manager::new(config, Box::new(store)).await.unwrap();
+
+    manager.create_root().await.unwrap();
+    let next_id = manager.next_id().await.unwrap();
+    assert_eq!(next_id, 1.into());
+
+    manager.delete(0.into()).await.unwrap();
+    assert_eq!(manager.object_count().await.unwrap(), 0);
+
+    create_hierarchy(&manager).await;
+    let next_id = manager.next_id().await.unwrap();
+    assert_eq!(next_id, 35.into());
+}

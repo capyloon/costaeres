@@ -219,9 +219,11 @@ impl Manager {
     }
 
     pub async fn clear(&self) -> Result<(), ObjectStoreError> {
+        let mut tx = self.db_pool.begin().await?;
         sqlx::query!("DELETE FROM objects")
-            .execute(&self.db_pool)
+            .execute(&mut tx)
             .await?;
+        tx.commit().await?;
 
         Ok(())
     }
@@ -409,6 +411,14 @@ impl Manager {
 
 #[async_trait(?Send)]
 impl ObjectManager for Manager {
+    async fn next_id(&self) -> Result<ObjectId, ObjectStoreError> {
+        let max = sqlx::query_scalar!("SELECT id FROM objects ORDER BY id DESC LIMIT 1")
+            .fetch_one(&self.db_pool)
+            .await?;
+
+        Ok((max + 1).into())
+    }
+
     async fn create(
         &self,
         metadata: &ObjectMetadata,

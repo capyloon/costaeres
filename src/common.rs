@@ -236,6 +236,8 @@ pub trait ObjectStore {
 // Operations needed for an object manager.
 #[async_trait(?Send)]
 pub trait ObjectManager {
+    async fn next_id(&self) -> Result<ObjectId, ObjectStoreError>;
+
     async fn create(
         &self,
         metadata: &ObjectMetadata,
