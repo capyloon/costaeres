@@ -5,9 +5,13 @@
 use crate::common::{
     BoxedReader, ObjectId, ObjectKind, ObjectMetadata, ObjectStore, ObjectStoreError,
 };
-use async_std::{fs, fs::File, io::prelude::WriteExt, path::Path};
+use async_std::{
+    fs,
+    fs::File,
+    io::prelude::WriteExt,
+    path::{Path, PathBuf},
+};
 use async_trait::async_trait;
-use std::path::PathBuf;
 
 macro_rules! custom_error {
     ($error:expr) => {
@@ -20,16 +24,18 @@ pub struct FileStore {
 }
 
 impl FileStore {
-    pub async fn new(root: &str) -> Result<Self, ObjectStoreError> {
+    pub async fn new<P>(path: P) -> Result<Self, ObjectStoreError>
+    where
+        P: AsRef<Path>,
+    {
         // Fail if the root is not an existing directory.
-        let file = File::open(root).await?;
+        let file = File::open(&path).await?;
         let meta = file.metadata().await?;
         if !meta.is_dir() {
             return custom_error!("NotDirectory");
         }
-        Ok(Self {
-            root: PathBuf::from(root),
-        })
+        let root = path.as_ref().to_path_buf();
+        Ok(Self { root })
     }
 
     fn get_paths(&self, id: ObjectId) -> (PathBuf, PathBuf) {
