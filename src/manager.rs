@@ -32,23 +32,22 @@ use std::collections::{HashMap, HashSet};
 
 pub struct Manager {
     db_pool: SqlitePool,
-    store: Box<dyn ObjectStore>,
+    store: Box<dyn ObjectStore + Send + Sync>,
     fts: Fts,
-    indexers: HashMap<String, Box<dyn Indexer>>, // Maps a content-type to an indexer.
+    indexers: HashMap<String, Box<dyn Indexer + Send + Sync>>, // Maps a content-type to an indexer.
 }
 
 impl Manager {
-    pub async fn new(config: Config, store: Box<dyn ObjectStore>) -> Result<Self, ()> {
-        let _file = File::create(&config.db_path)
-            .await
-            .map_err(|err| error!("Failed to create db file: {}", err))?;
-        let db_pool = SqlitePool::connect(&format!("sqlite://{}", config.db_path))
-            .await
-            .map_err(|err| error!("Failed to create pool for {}: {}", config.db_path, err))?;
+    pub async fn new(
+        config: Config,
+        store: Box<dyn ObjectStore + Send + Sync>,
+    ) -> Result<Self, ObjectStoreError> {
+        let _file = File::create(&config.db_path).await?;
+        let db_pool = SqlitePool::connect(&format!("sqlite://{}", config.db_path)).await?;
         sqlx::migrate!("db/migrations")
             .run(&db_pool)
             .await
-            .map_err(|err| error!("Failed to run migration: {}", err))?;
+            .map_err(|err| ObjectStoreError::Custom(format!("Failed to run migration: {}", err)))?;
 
         let fts = Fts::new(&db_pool, 5);
         Ok(Manager {
@@ -220,9 +219,7 @@ impl Manager {
 
     pub async fn clear(&self) -> Result<(), ObjectStoreError> {
         let mut tx = self.db_pool.begin().await?;
-        sqlx::query!("DELETE FROM objects")
-            .execute(&mut tx)
-            .await?;
+        sqlx::query!("DELETE FROM objects").execute(&mut tx).await?;
         tx.commit().await?;
 
         Ok(())
@@ -404,7 +401,7 @@ impl Manager {
         Ok(tx)
     }
 
-    pub fn add_indexer(&mut self, mime_type: &str, indexer: Box<dyn Indexer>) {
+    pub fn add_indexer(&mut self, mime_type: &str, indexer: Box<dyn Indexer + Send + Sync>) {
         let _ = self.indexers.insert(mime_type.into(), indexer);
     }
 }
