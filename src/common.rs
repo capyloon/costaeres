@@ -28,6 +28,12 @@ impl From<i64> for ObjectId {
     }
 }
 
+impl Into<i64> for ObjectId {
+    fn into(self) -> i64 {
+        self.0
+    }
+}
+
 #[derive(sqlx::Type, Clone, Copy, Debug, Deserialize, Serialize, PartialEq)]
 #[repr(u8)]
 pub enum ObjectKind {
