@@ -1,3 +1,4 @@
+pub mod array;
 pub mod common;
 pub mod config;
 pub mod file_store;

@@ -108,12 +108,20 @@ impl ObjectMetadata {
         self.size
     }
 
+    pub fn set_size(&mut self, size: i64) {
+        self.size = size;
+    }
+
     pub fn name(&self) -> String {
         self.name.clone()
     }
 
     pub fn mime_type(&self) -> String {
         self.mime_type.clone()
+    }
+
+    pub fn set_mime_type(&mut self, mime_type: &str) {
+        self.mime_type = mime_type.into();
     }
 
     // Returns a JSON representation of the score, to store in the DB.
@@ -201,7 +209,14 @@ impl PartialEq for ObjectStoreError {
 
 pub trait ReaderTrait: Read + Seek {}
 
+// Generic implementation.
+impl<T: Seek + Unpin + Read + ?Sized> ReaderTrait for Box<T> {}
+
+// Special case for files.
 impl ReaderTrait for async_std::fs::File {}
+
+// Special case for slices.
+impl ReaderTrait for async_std::io::Cursor<&[u8]> {}
 
 pub type BoxedReader = Box<dyn ReaderTrait + Unpin>;
 
