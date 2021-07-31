@@ -38,7 +38,7 @@ async fn create_hierarchy(manager: &Manager) {
     // Add a sub-container.
     let container = ObjectMetadata::new(
         1.into(),
-        0.into(),
+        ROOT_OBJECT_ID,
         ObjectKind::Container,
         10,
         "container",
@@ -99,8 +99,8 @@ async fn basic_manager() {
 
     // Adding an object.
     let meta = ObjectMetadata::new(
-        0.into(),
-        0.into(),
+        ROOT_OBJECT_ID,
+        ROOT_OBJECT_ID,
         ObjectKind::Leaf,
         10,
         "object 0",
@@ -123,8 +123,8 @@ async fn basic_manager() {
 
     // Update the root object.
     let meta = ObjectMetadata::new(
-        0.into(),
-        0.into(),
+        ROOT_OBJECT_ID,
+        ROOT_OBJECT_ID,
         ObjectKind::Leaf,
         100,
         "object 0 updated",
@@ -139,7 +139,7 @@ async fn basic_manager() {
     assert_eq!(res, meta);
 
     // Delete the root object
-    let res = manager.delete(0.into()).await;
+    let res = manager.delete(ROOT_OBJECT_ID).await;
     assert!(res.is_ok());
 
     // Expected failure
@@ -154,7 +154,7 @@ async fn rehydrate_single() {
     // Adding an object to the file store
     let meta = ObjectMetadata::new(
         1.into(),
-        0.into(),
+        ROOT_OBJECT_ID,
         ObjectKind::Leaf,
         10,
         "object 0",
@@ -199,7 +199,7 @@ async fn check_constraints() {
     // Fail to store an object if the parent doesn't exist.
     let leaf_meta = ObjectMetadata::new(
         1.into(),
-        0.into(),
+        ROOT_OBJECT_ID,
         ObjectKind::Leaf,
         10,
         "leaf 1",
@@ -213,8 +213,8 @@ async fn check_constraints() {
 
     // Create the root
     let root_meta = ObjectMetadata::new(
-        0.into(),
-        0.into(),
+        ROOT_OBJECT_ID,
+        ROOT_OBJECT_ID,
         ObjectKind::Container,
         10,
         "root",
@@ -268,7 +268,7 @@ async fn delete_hierarchy() {
     manager.delete(1.into()).await.unwrap();
     // Child 10 disappears, but not the root.
     assert_eq!(manager.has_object(10.into()).await.unwrap(), false);
-    assert_eq!(manager.has_object(0.into()).await.unwrap(), true);
+    assert_eq!(manager.has_object(ROOT_OBJECT_ID).await.unwrap(), true);
 }
 
 #[async_std::test]
@@ -286,7 +286,7 @@ async fn rehydrate_full() {
     assert_eq!(manager.object_count().await.unwrap(), 0);
 
     let (root_meta, children) = manager.get_root().await.unwrap();
-    assert_eq!(root_meta.id(), 0.into());
+    assert_eq!(root_meta.id(), ROOT_OBJECT_ID);
     assert_eq!(children.len(), 1);
 
     let (sub_meta, children) = manager.get_container(children[0].id()).await.unwrap();
@@ -302,13 +302,13 @@ async fn get_full_path() {
 
     create_hierarchy(&manager).await;
 
-    let root_path = manager.get_full_path(0.into()).await.unwrap();
+    let root_path = manager.get_full_path(ROOT_OBJECT_ID).await.unwrap();
     assert_eq!(root_path.len(), 1);
-    assert_eq!(root_path[0].id(), 0.into());
+    assert_eq!(root_path[0].id(), ROOT_OBJECT_ID);
 
     let obj_path = manager.get_full_path(30.into()).await.unwrap();
     assert_eq!(obj_path.len(), 4);
-    assert_eq!(obj_path[0].id(), 0.into());
+    assert_eq!(obj_path[0].id(), ROOT_OBJECT_ID);
     assert_eq!(obj_path[1].id(), 1.into());
     assert_eq!(obj_path[2].id(), 10.into());
     assert_eq!(obj_path[3].id(), 30.into());
@@ -406,7 +406,7 @@ async fn score() {
     let manager = Manager::new(config, Box::new(store)).await.unwrap();
     manager.create_root().await.unwrap();
 
-    let mut root_meta = manager.get_metadata(0.into()).await.unwrap();
+    let mut root_meta = manager.get_metadata(ROOT_OBJECT_ID).await.unwrap();
     assert_eq!(root_meta.scorer().frecency(), 0);
 
     // Update the score
@@ -419,7 +419,7 @@ async fn score() {
     manager.clear().await.unwrap();
 
     // Load the root again.
-    let root_meta = manager.get_metadata(0.into()).await.unwrap();
+    let root_meta = manager.get_metadata(ROOT_OBJECT_ID).await.unwrap();
     assert_eq!(initial_score, root_meta.scorer().frecency());
 }
 
@@ -431,7 +431,7 @@ async fn top_frecency() {
 
     create_hierarchy(&manager).await;
 
-    let mut root_meta = manager.get_metadata(0.into()).await.unwrap();
+    let mut root_meta = manager.get_metadata(ROOT_OBJECT_ID).await.unwrap();
     assert_eq!(root_meta.scorer().frecency(), 0);
 
     // Update the score
@@ -442,7 +442,7 @@ async fn top_frecency() {
     let results = manager.top_by_frecency(10).await.unwrap();
     assert_eq!(results.len(), 10);
     let first = results[0];
-    assert_eq!(first, (0.into(), 100));
+    assert_eq!(first, (ROOT_OBJECT_ID, 100));
 }
 
 #[async_std::test]
@@ -458,7 +458,7 @@ async fn index_places() {
     manager.create_root().await.unwrap();
     let leaf_meta = ObjectMetadata::new(
         1.into(),
-        0.into(),
+        ROOT_OBJECT_ID,
         ObjectKind::Leaf,
         10,
         "ecdf525a-e5d6-11eb-9c9b-d3fd1d0ea335",
@@ -529,7 +529,7 @@ async fn index_contacts() {
     manager.create_root().await.unwrap();
     let leaf_meta = ObjectMetadata::new(
         1.into(),
-        0.into(),
+        ROOT_OBJECT_ID,
         ObjectKind::Leaf,
         10,
         "ecdf525a-e5d6-11eb-9c9b-d3fd1d0ea335",
@@ -573,10 +573,27 @@ async fn id_generation() {
     let next_id = manager.next_id().await.unwrap();
     assert_eq!(next_id, 1.into());
 
-    manager.delete(0.into()).await.unwrap();
+    manager.delete(ROOT_OBJECT_ID).await.unwrap();
     assert_eq!(manager.object_count().await.unwrap(), 0);
 
     create_hierarchy(&manager).await;
     let next_id = manager.next_id().await.unwrap();
     assert_eq!(next_id, 35.into());
+}
+
+#[async_std::test]
+
+async fn get_root_children() {
+    let (config, store) = prepare_test(15).await;
+
+    let manager = Manager::new(config, Box::new(store)).await;
+    assert!(manager.is_ok(), "Failed to create a manager");
+    let manager = manager.unwrap();
+
+    manager.create_root().await.unwrap();
+
+    let (root, children) = manager.get_container(ROOT_OBJECT_ID).await.unwrap();
+
+    assert_eq!(root.id(), ROOT_OBJECT_ID);
+    assert_eq!(children.len(), 0);
 }

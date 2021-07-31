@@ -3,6 +3,7 @@ authors = ["Fabrice Desré <fabrice@desre.org>"]
 edition = "2018"
 name = "costaeres"
 version = "0.1.0"
+license = "AGPL-3.0-only"
 
 [dependencies]
 async-std = {version = "1.9", features = ["attributes"]}

@@ -558,8 +558,6 @@ impl ObjectManager for Manager {
 
     async fn get_metadata(&self, id: ObjectId) -> Result<ObjectMetadata, ObjectStoreError> {
         // Metadata can be retrieved fully from the SQL database.
-        // TODO: if that fails, try to re-hydrate from the object store.
-
         if let Ok(record) = sqlx::query!(
             r#"
     SELECT id, parent, kind, name, mimeType, size, created, modified, scorer  FROM objects
@@ -570,14 +568,6 @@ impl ObjectManager for Manager {
         .fetch_one(&self.db_pool)
         .await
         {
-            // Get the tags if any.
-            let tags: Vec<String> = sqlx::query!("SELECT tag FROM tags WHERE id = ?", id)
-                .fetch_all(&self.db_pool)
-                .await?
-                .iter()
-                .map(|r| r.tag.clone())
-                .collect();
-
             let mut meta = ObjectMetadata::new(
                 record.id.into(),
                 record.parent.into(),
@@ -588,6 +578,14 @@ impl ObjectManager for Manager {
                 None,
             );
 
+            // Get the tags if any.
+            let tags: Vec<String> = sqlx::query!("SELECT tag FROM tags WHERE id = ?", id)
+                .fetch_all(&self.db_pool)
+                .await?
+                .iter()
+                .map(|r| r.tag.clone())
+                .collect();
+
             if !tags.is_empty() {
                 meta.set_tags(Some(tags));
             }
@@ -595,10 +593,9 @@ impl ObjectManager for Manager {
             meta.set_created(DateTime::<Utc>::from_utc(record.created, Utc));
             meta.set_modified(DateTime::<Utc>::from_utc(record.modified, Utc));
             meta.set_scorer_from_db(&record.scorer);
-
             Ok(meta)
         } else {
-            // Rehydrate from the file storage.
+            // Rehydrate from the object storage.
             debug!(
                 "Object #{} not in index, fetching it from object storage.",
                 id
@@ -631,7 +628,6 @@ impl ObjectManager for Manager {
         id: ObjectId,
     ) -> Result<(ObjectMetadata, Vec<ObjectMetadata>), ObjectStoreError> {
         use async_std::io::ReadExt;
-
         let meta = self.get_metadata(id).await?;
 
         if meta.kind() != ObjectKind::Container {
@@ -639,18 +635,22 @@ impl ObjectManager for Manager {
         }
 
         // Read the list of children from the container content.
-        let mut file = self.store.get_content(id).await?;
-        let mut buffer = vec![];
-        file.read_to_end(&mut buffer).await?;
-        let bincode = bincode::options().with_big_endian().with_varint_encoding();
-        let children: Vec<ObjectId> = bincode.deserialize(&buffer)?;
+        if let Ok(mut file) = self.store.get_content(id).await {
+            let mut buffer = vec![];
+            file.read_to_end(&mut buffer).await?;
+            let bincode = bincode::options().with_big_endian().with_varint_encoding();
+            let children: Vec<ObjectId> = bincode.deserialize(&buffer)?;
 
-        // Get the metadata for each child.
-        let mut res = vec![];
-        for child in children {
-            res.push(self.get_metadata(child).await?);
+            // Get the metadata for each child.
+            let mut res = vec![];
+            for child in children {
+                res.push(self.get_metadata(child).await?);
+            }
+
+            Ok((meta, res))
+        } else {
+            // No children for this container.
+            Ok((meta, vec![]))
         }
-
-        Ok((meta, res))
     }
 }
