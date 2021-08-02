@@ -597,3 +597,78 @@ async fn get_root_children() {
     assert_eq!(root.id(), ROOT_OBJECT_ID);
     assert_eq!(children.len(), 0);
 }
+
+#[async_std::test]
+
+async fn unique_children_names() {
+    let (config, store) = prepare_test(16).await;
+
+    let manager = Manager::new(config, Box::new(store)).await;
+    assert!(manager.is_ok(), "Failed to create a manager");
+    let manager = manager.unwrap();
+
+    manager.create_root().await.unwrap();
+
+    let leaf_meta = ObjectMetadata::new(
+        1.into(),
+        ROOT_OBJECT_ID,
+        ObjectKind::Leaf,
+        10,
+        "file.txt",
+        "text/plain",
+        None,
+    );
+
+    manager.create(&leaf_meta, None).await.unwrap();
+
+    let res = manager.create(&leaf_meta, None).await;
+    assert!(res.is_err());
+}
+
+#[async_std::test]
+
+async fn child_by_name() {
+    let (config, store) = prepare_test(16).await;
+
+    let manager = Manager::new(config, Box::new(store)).await;
+    assert!(manager.is_ok(), "Failed to create a manager");
+    let manager = manager.unwrap();
+
+    manager.create_root().await.unwrap();
+
+    let leaf_meta = ObjectMetadata::new(
+        1.into(),
+        ROOT_OBJECT_ID,
+        ObjectKind::Leaf,
+        10,
+        "file.txt",
+        "text/plain",
+        None,
+    );
+
+    manager.create(&leaf_meta, None).await.unwrap();
+
+    let leaf_meta = ObjectMetadata::new(
+        2.into(),
+        ROOT_OBJECT_ID,
+        ObjectKind::Leaf,
+        10,
+        "photo.png",
+        "image/png",
+        None,
+    );
+
+    manager.create(&leaf_meta, None).await.unwrap();
+
+    let file = manager
+        .child_by_name(ROOT_OBJECT_ID, "file.txt")
+        .await
+        .unwrap();
+    assert_eq!(file.mime_type(), "text/plain");
+
+    let image = manager
+        .child_by_name(ROOT_OBJECT_ID, "photo.png")
+        .await
+        .unwrap();
+    assert_eq!(image.mime_type(), "image/png");
+}

@@ -310,6 +310,28 @@ impl Manager {
         Ok(results)
     }
 
+    // Retrieve the object with a given name and parent.
+    pub async fn child_by_name(
+        &self,
+        parent: ObjectId,
+        name: &str,
+    ) -> Result<ObjectMetadata, ObjectStoreError> {
+        if name.trim().is_empty() {
+            return Err(ObjectStoreError::Custom("EmptyNameQuery".into()));
+        }
+
+        let child = sqlx::query!(
+            "SELECT id FROM objects WHERE parent = ? AND name = ?",
+            parent,
+            name,
+        )
+        .fetch_one(&self.db_pool)
+        .await?
+        .id;
+
+        self.get_metadata(child.into()).await
+    }
+
     // Retrieve the list of objects matching the given tag, optionnaly restricted to a given mime type.
     // TODO: pagination
     pub async fn by_tag(

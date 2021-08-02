@@ -10,7 +10,9 @@ CREATE TABLE IF NOT EXISTS objects
     created  DATETIME NOT NULL,
     modified DATETIME NOT NULL,
     scorer   TEXT     NOT NULL,
-    frecency INTEGER  NOT NULL DEFAULT 0
+    frecency INTEGER  NOT NULL DEFAULT 0,
+-- Enforce unique names under a container.
+    UNIQUE(parent , name)
 );
 
 CREATE INDEX IF NOT EXISTS idx_obj_mime ON objects(mimeType);
