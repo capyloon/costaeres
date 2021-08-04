@@ -38,7 +38,7 @@ impl Fts {
         Ok(tx)
     }
 
-    // Return objects that have a match for all tokens
+    // Return objects that have a match for all tokens, ordered by frecency.
     pub async fn search(&self, text: &str) -> Result<Vec<(ObjectId, u32)>, ObjectStoreError> {
         let mut tx = self.db_pool.begin().await?;
         // Map ObjectId -> (ngram matches, frecency)

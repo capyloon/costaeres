@@ -1,5 +1,5 @@
 /// Indexers for recognized mime types.
-use crate::common::{BoxedReader, ObjectId, TransactionResult};
+use crate::common::{BoxedReader, ObjectMetadata, TransactionResult};
 use crate::fts::Fts;
 use async_std::io::{ReadExt, SeekFrom};
 use async_trait::async_trait;
@@ -11,7 +11,7 @@ use sqlx::{Sqlite, Transaction};
 pub trait Indexer {
     async fn index<'c>(
         &self,
-        id: ObjectId,
+        meta: &ObjectMetadata,
         content: &mut BoxedReader,
         fts: &Fts,
         mut tx: Transaction<'c, Sqlite>,
@@ -22,12 +22,14 @@ pub trait Indexer {
 // Indexed properties are strings and string arrays members.
 pub struct FlatJsonIndexer {
     fields: Vec<String>,
+    mime_type: String,
 }
 
 impl FlatJsonIndexer {
-    pub fn new(fields: &[&str]) -> Self {
+    pub fn new(mime_type: &str, fields: &[&str]) -> Self {
         Self {
             fields: fields.iter().cloned().map(|e| e.to_owned()).collect(),
+            mime_type: mime_type.into(),
         }
     }
 }
@@ -36,11 +38,16 @@ impl FlatJsonIndexer {
 impl Indexer for FlatJsonIndexer {
     async fn index<'c>(
         &self,
-        id: ObjectId,
+        meta: &ObjectMetadata,
         content: &mut BoxedReader,
         fts: &Fts,
         mut tx: Transaction<'c, Sqlite>,
     ) -> TransactionResult<'c> {
+        // 0. Filer by mime type.
+        if self.mime_type != meta.mime_type() {
+            return Ok(tx);
+        }
+
         // 1. Read the content as json.
         content.seek(SeekFrom::Start(0)).await?;
         let mut buffer = vec![];
@@ -51,18 +58,20 @@ impl Indexer for FlatJsonIndexer {
         for field in &self.fields {
             match v.get(field) {
                 Some(Value::String(text)) => {
-                    tx = fts.add_text(id, text, tx).await?;
+                    tx = fts.add_text(meta.id(), text, tx).await?;
                 }
                 Some(Value::Array(array)) => {
                     for item in array {
                         if let Value::String(text) = item {
-                            tx = fts.add_text(id, text, tx).await?;
+                            tx = fts.add_text(meta.id(), text, tx).await?;
                         }
                     }
                 }
                 _ => {}
             }
         }
+        // 3. Re-position the stream at the beginning.
+        content.seek(SeekFrom::Start(0)).await?;
 
         Ok(tx)
     }
@@ -72,12 +81,12 @@ impl Indexer for FlatJsonIndexer {
 // This is a json value with the following format:
 // { url: "...", title: "...", icon: "..." }
 pub fn create_places_indexer() -> FlatJsonIndexer {
-    FlatJsonIndexer::new(&["url", "title"])
+    FlatJsonIndexer::new("application/x-places+json", &["url", "title"])
 }
 
 // Indexer for the content of a "Contacts" object.
 // This is a json value with the following format:
 // { name: "...", phone: "[...]", email: "[...]" }
 pub fn create_contacts_indexer() -> FlatJsonIndexer {
-    FlatJsonIndexer::new(&["name", "phone", "email"])
+    FlatJsonIndexer::new("application/x-contacts+json", &["name", "phone", "email"])
 }

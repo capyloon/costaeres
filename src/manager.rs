@@ -28,13 +28,13 @@ use bincode::Options;
 use chrono::{DateTime, Utc};
 use log::{debug, error};
 use sqlx::{Sqlite, SqlitePool, Transaction};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 
 pub struct Manager {
     db_pool: SqlitePool,
     store: Box<dyn ObjectStore + Send + Sync>,
     fts: Fts,
-    indexers: HashMap<String, Box<dyn Indexer + Send + Sync>>, // Maps a content-type to an indexer.
+    indexers: Vec<Box<dyn Indexer + Send + Sync>>, // The list of indexers available.
 }
 
 impl Manager {
@@ -58,7 +58,7 @@ impl Manager {
             db_pool,
             store,
             fts,
-            indexers: HashMap::new(),
+            indexers: Vec::new(),
         })
     }
 
@@ -420,17 +420,15 @@ impl Manager {
             return Ok(tx);
         }
 
-        if let Some(indexer) = self.indexers.get(&metadata.mime_type()) {
-            tx = indexer.index(metadata.id(), content, &self.fts, tx).await?
-        } else {
-            debug!("No indexer available for {}", metadata.mime_type());
+        for indexer in &self.indexers {
+            tx = indexer.index(&metadata, content, &self.fts, tx).await?
         }
 
         Ok(tx)
     }
 
-    pub fn add_indexer(&mut self, mime_type: &str, indexer: Box<dyn Indexer + Send + Sync>) {
-        let _ = self.indexers.insert(mime_type.into(), indexer);
+    pub fn add_indexer(&mut self, indexer: Box<dyn Indexer + Send + Sync>) {
+        self.indexers.push(indexer);
     }
 
     pub async fn close(&self) {

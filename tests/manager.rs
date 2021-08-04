@@ -450,10 +450,7 @@ async fn index_places() {
     let (config, store) = prepare_test(12).await;
 
     let mut manager = Manager::new(config, Box::new(store)).await.unwrap();
-    manager.add_indexer(
-        "application/x-places+json",
-        Box::new(create_places_indexer()),
-    );
+    manager.add_indexer(Box::new(create_places_indexer()));
 
     manager.create_root().await.unwrap();
     let leaf_meta = ObjectMetadata::new(
@@ -521,10 +518,7 @@ async fn index_contacts() {
     let (config, store) = prepare_test(13).await;
 
     let mut manager = Manager::new(config, Box::new(store)).await.unwrap();
-    manager.add_indexer(
-        "application/x-contacts+json",
-        Box::new(create_contacts_indexer()),
-    );
+    manager.add_indexer(Box::new(create_contacts_indexer()));
 
     manager.create_root().await.unwrap();
     let leaf_meta = ObjectMetadata::new(
