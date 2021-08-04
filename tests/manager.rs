@@ -672,3 +672,30 @@ async fn child_by_name() {
         .unwrap();
     assert_eq!(image.mime_type(), "image/png");
 }
+
+#[async_std::test]
+
+async fn migration_check() {
+    let (config, store) = prepare_test(17).await;
+
+    {
+        let manager = Manager::new(config.clone(), Box::new(store.clone())).await;
+        assert!(manager.is_ok(), "Failed to create first manager");
+        let manager = manager.unwrap();
+
+        manager.create_root().await.unwrap();
+
+        manager.close().await;
+    }
+
+    {
+        let manager = Manager::new(config, Box::new(store)).await;
+        assert!(manager.is_ok(), "Failed to create second manager");
+        let manager = manager.unwrap();
+
+        let has_root = manager.has_object(ROOT_OBJECT_ID).await.unwrap();
+        assert_eq!(has_root, true);
+
+        manager.close().await;
+    }
+}

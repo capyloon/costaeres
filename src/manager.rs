@@ -42,7 +42,11 @@ impl Manager {
         config: Config,
         store: Box<dyn ObjectStore + Send + Sync>,
     ) -> Result<Self, ObjectStoreError> {
-        let _file = File::create(&config.db_path).await?;
+        // Create db file if needed.
+        if let Err(_) = File::open(&config.db_path).await {
+            let _file = File::create(&config.db_path).await?;
+        }
+
         let db_pool = SqlitePool::connect(&format!("sqlite://{}", config.db_path)).await?;
         sqlx::migrate!("db/migrations")
             .run(&db_pool)
@@ -165,7 +169,7 @@ impl Manager {
         executor: E,
     ) -> Result<Vec<ObjectId>, ObjectStoreError> {
         let children: Vec<ObjectId> = sqlx::query!(
-            "SELECT id FROM objects WHERE parent = ? and parent != id",
+            "SELECT id FROM objects WHERE parent = ? AND parent != id",
             parent
         )
         .fetch_all(executor)
@@ -320,16 +324,18 @@ impl Manager {
             return Err(ObjectStoreError::Custom("EmptyNameQuery".into()));
         }
 
-        let child = sqlx::query!(
+        let record = sqlx::query!(
             "SELECT id FROM objects WHERE parent = ? AND name = ?",
             parent,
             name,
         )
-        .fetch_one(&self.db_pool)
-        .await?
-        .id;
+        .fetch_optional(&self.db_pool)
+        .await?;
 
-        self.get_metadata(child.into()).await
+        match record {
+            Some(child) => self.get_metadata(child.id.into()).await,
+            None => Err(ObjectStoreError::NoSuchObject),
+        }
     }
 
     // Retrieve the list of objects matching the given tag, optionnaly restricted to a given mime type.
@@ -425,6 +431,10 @@ impl Manager {
 
     pub fn add_indexer(&mut self, mime_type: &str, indexer: Box<dyn Indexer + Send + Sync>) {
         let _ = self.indexers.insert(mime_type.into(), indexer);
+    }
+
+    pub async fn close(&self) {
+        self.db_pool.close().await
     }
 }
 
@@ -580,54 +590,57 @@ impl ObjectManager for Manager {
 
     async fn get_metadata(&self, id: ObjectId) -> Result<ObjectMetadata, ObjectStoreError> {
         // Metadata can be retrieved fully from the SQL database.
-        if let Ok(record) = sqlx::query!(
+        match sqlx::query!(
             r#"
-    SELECT id, parent, kind, name, mimeType, size, created, modified, scorer  FROM objects
-    WHERE id = ?
-            "#,
+    SELECT id, parent, kind, name, mimeType, size, created, modified, scorer FROM objects
+    WHERE id = ?"#,
             id
         )
         .fetch_one(&self.db_pool)
         .await
         {
-            let mut meta = ObjectMetadata::new(
-                record.id.into(),
-                record.parent.into(),
-                record.kind.into(),
-                record.size,
-                &record.name,
-                &record.mimeType,
-                None,
-            );
+            Ok(record) => {
+                let mut meta = ObjectMetadata::new(
+                    record.id.into(),
+                    record.parent.into(),
+                    record.kind.into(),
+                    record.size,
+                    &record.name,
+                    &record.mimeType,
+                    None,
+                );
 
-            // Get the tags if any.
-            let tags: Vec<String> = sqlx::query!("SELECT tag FROM tags WHERE id = ?", id)
-                .fetch_all(&self.db_pool)
-                .await?
-                .iter()
-                .map(|r| r.tag.clone())
-                .collect();
+                // Get the tags if any.
+                let tags: Vec<String> = sqlx::query!("SELECT tag FROM tags WHERE id = ?", id)
+                    .fetch_all(&self.db_pool)
+                    .await?
+                    .iter()
+                    .map(|r| r.tag.clone())
+                    .collect();
 
-            if !tags.is_empty() {
-                meta.set_tags(Some(tags));
+                if !tags.is_empty() {
+                    meta.set_tags(Some(tags));
+                }
+
+                meta.set_created(DateTime::<Utc>::from_utc(record.created, Utc));
+                meta.set_modified(DateTime::<Utc>::from_utc(record.modified, Utc));
+                meta.set_scorer_from_db(&record.scorer);
+                Ok(meta)
             }
+            Err(err) => {
+                // Rehydrate from the object storage.
+                debug!(
+                    "Metadata for object #{} not in db ({}), fetching it from object storage.",
+                    id, err
+                );
+                // Err(ObjectStoreError::NoSuchObject)
+                let metadata = self.store.get_metadata(id).await?;
+                let tx = self.db_pool.begin().await?;
+                let tx2 = self.create_metadata(&metadata, tx).await?;
+                tx2.commit().await?;
 
-            meta.set_created(DateTime::<Utc>::from_utc(record.created, Utc));
-            meta.set_modified(DateTime::<Utc>::from_utc(record.modified, Utc));
-            meta.set_scorer_from_db(&record.scorer);
-            Ok(meta)
-        } else {
-            // Rehydrate from the object storage.
-            debug!(
-                "Object #{} not in index, fetching it from object storage.",
-                id
-            );
-            let metadata = self.store.get_metadata(id).await?;
-            let tx = self.db_pool.begin().await?;
-            let tx2 = self.create_metadata(&metadata, tx).await?;
-            tx2.commit().await?;
-
-            Ok(metadata)
+                Ok(metadata)
+            }
         }
     }
 
@@ -650,6 +663,7 @@ impl ObjectManager for Manager {
         id: ObjectId,
     ) -> Result<(ObjectMetadata, Vec<ObjectMetadata>), ObjectStoreError> {
         use async_std::io::ReadExt;
+
         let meta = self.get_metadata(id).await?;
 
         if meta.kind() != ObjectKind::Container {

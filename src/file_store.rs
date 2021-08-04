@@ -12,6 +12,7 @@ use async_std::{
     path::{Path, PathBuf},
 };
 use async_trait::async_trait;
+use log::error;
 
 macro_rules! custom_error {
     ($error:expr) => {
@@ -19,6 +20,7 @@ macro_rules! custom_error {
     };
 }
 
+#[derive(Clone)]
 pub struct FileStore {
     root: PathBuf, // The root path of the storage.
 }
@@ -61,6 +63,7 @@ impl ObjectStore for FileStore {
         // 1. Check if we already have files for this id, and bail out if so.
         let file = File::open(&meta_path).await;
         if file.is_ok() {
+            error!("Can't create two files with path {}", meta_path.display());
             return Err(ObjectStoreError::ObjectAlreadyExists);
         }
 
