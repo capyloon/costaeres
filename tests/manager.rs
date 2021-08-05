@@ -7,9 +7,21 @@ use costaeres::indexer::*;
 use costaeres::manager::*;
 use costaeres::scorer::{VisitEntry, VisitPriority};
 
-async fn create_content() -> BoxedReader {
+fn named_variant(name: &str) -> Variant {
+    Variant::new(name, "application/octet-stream", 42)
+}
+
+fn default_variant() -> Variant {
+    named_variant("default")
+}
+
+async fn named_content(name: &str) -> VariantContent {
     let file = fs::File::open("./create_db.sh").await.unwrap();
-    Box::new(file)
+    VariantContent::new(named_variant(name), Box::new(file))
+}
+
+async fn default_content() -> VariantContent {
+    named_content("default").await
 }
 
 // Prepare a test directory, and returns the matching config and file store.
@@ -36,54 +48,57 @@ async fn create_hierarchy(manager: &Manager) {
     manager.create_root().await.unwrap();
 
     // Add a sub-container.
-    let container = ObjectMetadata::new(
+    let container = ResourceMetadata::new(
         1.into(),
-        ROOT_OBJECT_ID,
-        ObjectKind::Container,
+        ROOT_ID,
+        ResourceKind::Container,
         10,
         "container",
         "text/plain",
-        None,
+        vec![],
+        vec![],
     );
     manager
-        .create(&container, Some(create_content().await))
+        .create(&container, Some(default_content().await))
         .await
         .unwrap();
 
     // Add a few children to the container.
     for i in 5..15 {
-        let child = ObjectMetadata::new(
+        let child = ResourceMetadata::new(
             i.into(),
             1.into(),
             if i == 10 {
-                ObjectKind::Container
+                ResourceKind::Container
             } else {
-                ObjectKind::Leaf
+                ResourceKind::Leaf
             },
             10,
             &format!("child #{}", i),
             "text/plain",
-            None,
+            vec![],
+            vec![default_variant()],
         );
         manager
-            .create(&child, Some(create_content().await))
+            .create(&child, Some(default_content().await))
             .await
             .unwrap();
     }
 
     // Add a few children to the sub-container #10.
     for i in 25..35 {
-        let child = ObjectMetadata::new(
+        let child = ResourceMetadata::new(
             i.into(),
             10.into(),
-            ObjectKind::Leaf,
+            ResourceKind::Leaf,
             10,
             &format!("child #{}", i),
             "text/plain",
-            Some(vec!["sub-child".into()]),
+            vec!["sub-child".into()],
+            vec![default_variant()],
         );
         manager
-            .create(&child, Some(create_content().await))
+            .create(&child, Some(default_content().await))
             .await
             .unwrap();
     }
@@ -98,18 +113,19 @@ async fn basic_manager() {
     let manager = manager.unwrap();
 
     // Adding an object.
-    let meta = ObjectMetadata::new(
-        ROOT_OBJECT_ID,
-        ROOT_OBJECT_ID,
-        ObjectKind::Leaf,
+    let meta = ResourceMetadata::new(
+        ROOT_ID,
+        ROOT_ID,
+        ResourceKind::Leaf,
         10,
         "object 0",
         "text/plain",
-        Some(vec!["one".into(), "two".into()]),
+        vec!["one".into(), "two".into()],
+        vec![default_variant()],
     );
 
     manager
-        .create(&meta, Some(create_content().await))
+        .create(&meta, Some(default_content().await))
         .await
         .unwrap();
     // assert_eq!(res, Ok(()));
@@ -122,16 +138,17 @@ async fn basic_manager() {
     assert!(res.is_err());
 
     // Update the root object.
-    let meta = ObjectMetadata::new(
-        ROOT_OBJECT_ID,
-        ROOT_OBJECT_ID,
-        ObjectKind::Leaf,
+    let meta = ResourceMetadata::new(
+        ROOT_ID,
+        ROOT_ID,
+        ResourceKind::Leaf,
         100,
         "object 0 updated",
         "text/plain",
-        Some(vec!["one".into(), "two".into(), "three".into()]),
+        vec!["one".into(), "two".into(), "three".into()],
+        vec![default_variant()],
     );
-    let res = manager.update(&meta, Some(create_content().await)).await;
+    let res = manager.update(&meta, Some(default_content().await)).await;
     assert_eq!(res, Ok(()));
 
     // Verify the updated metadata.
@@ -139,7 +156,7 @@ async fn basic_manager() {
     assert_eq!(res, meta);
 
     // Delete the root object
-    let res = manager.delete(ROOT_OBJECT_ID).await;
+    let res = manager.delete(ROOT_ID).await;
     assert!(res.is_ok());
 
     // Expected failure
@@ -152,17 +169,18 @@ async fn rehydrate_single() {
     let (config, store) = prepare_test(2).await;
 
     // Adding an object to the file store
-    let meta = ObjectMetadata::new(
+    let meta = ResourceMetadata::new(
         1.into(),
-        ROOT_OBJECT_ID,
-        ObjectKind::Leaf,
+        ROOT_ID,
+        ResourceKind::Leaf,
         10,
         "object 0",
         "text/plain",
-        Some(vec!["one".into(), "two".into()]),
+        vec!["one".into(), "two".into()],
+        vec![default_variant()],
     );
     store
-        .create(&meta, Some(create_content().await))
+        .create(&meta, Some(default_content().await))
         .await
         .unwrap();
 
@@ -180,72 +198,76 @@ async fn rehydrate_single() {
 async fn check_constraints() {
     let (config, store) = prepare_test(3).await;
 
-    let meta = ObjectMetadata::new(
+    let meta = ResourceMetadata::new(
         1.into(),
         1.into(),
-        ObjectKind::Leaf,
+        ResourceKind::Leaf,
         10,
         "object 0",
         "text/plain",
-        None,
+        vec![],
+        vec![],
     );
 
     let manager = Manager::new(config, Box::new(store)).await.unwrap();
 
     // Fail to store an object where both id and parent are 1
-    let res = manager.create(&meta, Some(create_content().await)).await;
-    assert_eq!(res, Err(ObjectStoreError::InvalidContainerId));
+    let res = manager.create(&meta, Some(default_content().await)).await;
+    assert_eq!(res, Err(ResourceStoreError::InvalidContainerId));
 
     // Fail to store an object if the parent doesn't exist.
-    let leaf_meta = ObjectMetadata::new(
+    let leaf_meta = ResourceMetadata::new(
         1.into(),
-        ROOT_OBJECT_ID,
-        ObjectKind::Leaf,
+        ROOT_ID,
+        ResourceKind::Leaf,
         10,
         "leaf 1",
         "text/plain",
-        None,
+        vec![],
+        vec![default_variant()],
     );
     let res = manager
-        .create(&leaf_meta, Some(create_content().await))
+        .create(&leaf_meta, Some(default_content().await))
         .await;
-    assert_eq!(res, Err(ObjectStoreError::InvalidContainerId));
+    assert_eq!(res, Err(ResourceStoreError::InvalidContainerId));
 
     // Create the root
-    let root_meta = ObjectMetadata::new(
-        ROOT_OBJECT_ID,
-        ROOT_OBJECT_ID,
-        ObjectKind::Container,
+    let root_meta = ResourceMetadata::new(
+        ROOT_ID,
+        ROOT_ID,
+        ResourceKind::Container,
         10,
         "root",
         "text/plain",
-        None,
+        vec![],
+        vec![default_variant()],
     );
     manager
-        .create(&root_meta, Some(create_content().await))
+        .create(&root_meta, Some(default_content().await))
         .await
         .unwrap();
 
     // And now add the leaf.
     manager
-        .create(&leaf_meta, Some(create_content().await))
+        .create(&leaf_meta, Some(default_content().await))
         .await
         .unwrap();
 
     // Try to update the leaf to a non-existent parent.
-    let leaf_meta = ObjectMetadata::new(
+    let leaf_meta = ResourceMetadata::new(
         1.into(),
         2.into(),
-        ObjectKind::Leaf,
+        ResourceKind::Leaf,
         10,
         "leaf 1",
         "text/plain",
-        None,
+        vec![],
+        vec![default_variant()],
     );
     let res = manager
-        .create(&leaf_meta, Some(create_content().await))
+        .create(&leaf_meta, Some(default_content().await))
         .await;
-    assert_eq!(res, Err(ObjectStoreError::InvalidContainerId));
+    assert_eq!(res, Err(ResourceStoreError::InvalidContainerId));
 }
 
 #[async_std::test]
@@ -268,7 +290,7 @@ async fn delete_hierarchy() {
     manager.delete(1.into()).await.unwrap();
     // Child 10 disappears, but not the root.
     assert_eq!(manager.has_object(10.into()).await.unwrap(), false);
-    assert_eq!(manager.has_object(ROOT_OBJECT_ID).await.unwrap(), true);
+    assert_eq!(manager.has_object(ROOT_ID).await.unwrap(), true);
 }
 
 #[async_std::test]
@@ -279,14 +301,14 @@ async fn rehydrate_full() {
 
     create_hierarchy(&manager).await;
 
-    assert_eq!(manager.object_count().await.unwrap(), 22);
+    assert_eq!(manager.resource_count().await.unwrap(), 22);
 
     // Clear the local index.
     manager.clear().await.unwrap();
-    assert_eq!(manager.object_count().await.unwrap(), 0);
+    assert_eq!(manager.resource_count().await.unwrap(), 0);
 
     let (root_meta, children) = manager.get_root().await.unwrap();
-    assert_eq!(root_meta.id(), ROOT_OBJECT_ID);
+    assert_eq!(root_meta.id(), ROOT_ID);
     assert_eq!(children.len(), 1);
 
     let (sub_meta, children) = manager.get_container(children[0].id()).await.unwrap();
@@ -302,13 +324,13 @@ async fn get_full_path() {
 
     create_hierarchy(&manager).await;
 
-    let root_path = manager.get_full_path(ROOT_OBJECT_ID).await.unwrap();
+    let root_path = manager.get_full_path(ROOT_ID).await.unwrap();
     assert_eq!(root_path.len(), 1);
-    assert_eq!(root_path[0].id(), ROOT_OBJECT_ID);
+    assert_eq!(root_path[0].id(), ROOT_ID);
 
     let obj_path = manager.get_full_path(30.into()).await.unwrap();
     assert_eq!(obj_path.len(), 4);
-    assert_eq!(obj_path[0].id(), ROOT_OBJECT_ID);
+    assert_eq!(obj_path[0].id(), ROOT_ID);
     assert_eq!(obj_path[1].id(), 1.into());
     assert_eq!(obj_path[2].id(), 10.into());
     assert_eq!(obj_path[3].id(), 30.into());
@@ -406,7 +428,7 @@ async fn score() {
     let manager = Manager::new(config, Box::new(store)).await.unwrap();
     manager.create_root().await.unwrap();
 
-    let mut root_meta = manager.get_metadata(ROOT_OBJECT_ID).await.unwrap();
+    let mut root_meta = manager.get_metadata(ROOT_ID).await.unwrap();
     assert_eq!(root_meta.scorer().frecency(), 0);
 
     // Update the score
@@ -419,7 +441,7 @@ async fn score() {
     manager.clear().await.unwrap();
 
     // Load the root again.
-    let root_meta = manager.get_metadata(ROOT_OBJECT_ID).await.unwrap();
+    let root_meta = manager.get_metadata(ROOT_ID).await.unwrap();
     assert_eq!(initial_score, root_meta.scorer().frecency());
 }
 
@@ -431,7 +453,7 @@ async fn top_frecency() {
 
     create_hierarchy(&manager).await;
 
-    let mut root_meta = manager.get_metadata(ROOT_OBJECT_ID).await.unwrap();
+    let mut root_meta = manager.get_metadata(ROOT_ID).await.unwrap();
     assert_eq!(root_meta.scorer().frecency(), 0);
 
     // Update the score
@@ -442,7 +464,7 @@ async fn top_frecency() {
     let results = manager.top_by_frecency(10).await.unwrap();
     assert_eq!(results.len(), 10);
     let first = results[0];
-    assert_eq!(first, (ROOT_OBJECT_ID, 100));
+    assert_eq!(first, (ROOT_ID, 100));
 }
 
 #[async_std::test]
@@ -453,14 +475,15 @@ async fn index_places() {
     manager.add_indexer(Box::new(create_places_indexer()));
 
     manager.create_root().await.unwrap();
-    let leaf_meta = ObjectMetadata::new(
+    let leaf_meta = ResourceMetadata::new(
         1.into(),
-        ROOT_OBJECT_ID,
-        ObjectKind::Leaf,
+        ROOT_ID,
+        ResourceKind::Leaf,
         10,
         "ecdf525a-e5d6-11eb-9c9b-d3fd1d0ea335",
         "application/x-places+json",
-        None,
+        vec![],
+        vec![default_variant()],
     );
 
     let places1 = fs::File::open("./test-fixtures/places-1.json")
@@ -468,7 +491,13 @@ async fn index_places() {
         .unwrap();
 
     manager
-        .create(&leaf_meta, Some(Box::new(places1)))
+        .create(
+            &leaf_meta,
+            Some(VariantContent::new(
+                named_variant("default"),
+                Box::new(places1),
+            )),
+        )
         .await
         .unwrap();
 
@@ -491,7 +520,13 @@ async fn index_places() {
         .await
         .unwrap();
     manager
-        .update(&leaf_meta, Some(Box::new(places2)))
+        .update(
+            &leaf_meta,
+            Some(VariantContent::new(
+                named_variant("default"),
+                Box::new(places2),
+            )),
+        )
         .await
         .unwrap();
 
@@ -542,14 +577,15 @@ async fn index_contacts() {
     manager.add_indexer(Box::new(create_contacts_indexer()));
 
     manager.create_root().await.unwrap();
-    let leaf_meta = ObjectMetadata::new(
+    let leaf_meta = ResourceMetadata::new(
         1.into(),
-        ROOT_OBJECT_ID,
-        ObjectKind::Leaf,
+        ROOT_ID,
+        ResourceKind::Leaf,
         10,
         "ecdf525a-e5d6-11eb-9c9b-d3fd1d0ea335",
         "application/x-contacts+json",
-        None,
+        vec![],
+        vec![default_variant()],
     );
 
     let places1 = fs::File::open("./test-fixtures/contacts-1.json")
@@ -557,7 +593,13 @@ async fn index_contacts() {
         .unwrap();
 
     manager
-        .create(&leaf_meta, Some(Box::new(places1)))
+        .create(
+            &leaf_meta,
+            Some(VariantContent::new(
+                named_variant("default"),
+                Box::new(places1),
+            )),
+        )
         .await
         .unwrap();
 
@@ -600,8 +642,8 @@ async fn id_generation() {
     let next_id = manager.next_id().await.unwrap();
     assert_eq!(next_id, 1.into());
 
-    manager.delete(ROOT_OBJECT_ID).await.unwrap();
-    assert_eq!(manager.object_count().await.unwrap(), 0);
+    manager.delete(ROOT_ID).await.unwrap();
+    assert_eq!(manager.resource_count().await.unwrap(), 0);
 
     create_hierarchy(&manager).await;
     let next_id = manager.next_id().await.unwrap();
@@ -619,9 +661,9 @@ async fn get_root_children() {
 
     manager.create_root().await.unwrap();
 
-    let (root, children) = manager.get_container(ROOT_OBJECT_ID).await.unwrap();
+    let (root, children) = manager.get_container(ROOT_ID).await.unwrap();
 
-    assert_eq!(root.id(), ROOT_OBJECT_ID);
+    assert_eq!(root.id(), ROOT_ID);
     assert_eq!(children.len(), 0);
 }
 
@@ -636,14 +678,15 @@ async fn unique_children_names() {
 
     manager.create_root().await.unwrap();
 
-    let leaf_meta = ObjectMetadata::new(
+    let leaf_meta = ResourceMetadata::new(
         1.into(),
-        ROOT_OBJECT_ID,
-        ObjectKind::Leaf,
+        ROOT_ID,
+        ResourceKind::Leaf,
         10,
         "file.txt",
         "text/plain",
-        None,
+        vec![],
+        vec![],
     );
 
     manager.create(&leaf_meta, None).await.unwrap();
@@ -663,41 +706,37 @@ async fn child_by_name() {
 
     manager.create_root().await.unwrap();
 
-    let leaf_meta = ObjectMetadata::new(
+    let leaf_meta = ResourceMetadata::new(
         1.into(),
-        ROOT_OBJECT_ID,
-        ObjectKind::Leaf,
+        ROOT_ID,
+        ResourceKind::Leaf,
         10,
         "file.txt",
         "text/plain",
-        None,
+        vec![],
+        vec![],
     );
 
     manager.create(&leaf_meta, None).await.unwrap();
 
-    let leaf_meta = ObjectMetadata::new(
+    let leaf_meta = ResourceMetadata::new(
         2.into(),
-        ROOT_OBJECT_ID,
-        ObjectKind::Leaf,
+        ROOT_ID,
+        ResourceKind::Leaf,
         10,
         "photo.png",
         "image/png",
-        None,
+        vec![],
+        vec![],
     );
 
     manager.create(&leaf_meta, None).await.unwrap();
 
-    let file = manager
-        .child_by_name(ROOT_OBJECT_ID, "file.txt")
-        .await
-        .unwrap();
-    assert_eq!(file.mime_type(), "text/plain");
+    let file = manager.child_by_name(ROOT_ID, "file.txt").await.unwrap();
+    assert_eq!(file.family(), "text/plain");
 
-    let image = manager
-        .child_by_name(ROOT_OBJECT_ID, "photo.png")
-        .await
-        .unwrap();
-    assert_eq!(image.mime_type(), "image/png");
+    let image = manager.child_by_name(ROOT_ID, "photo.png").await.unwrap();
+    assert_eq!(image.family(), "image/png");
 }
 
 #[async_std::test]
@@ -720,7 +759,7 @@ async fn migration_check() {
         assert!(manager.is_ok(), "Failed to create second manager");
         let manager = manager.unwrap();
 
-        let has_root = manager.has_object(ROOT_OBJECT_ID).await.unwrap();
+        let has_root = manager.has_object(ROOT_ID).await.unwrap();
         assert_eq!(has_root, true);
 
         manager.close().await;

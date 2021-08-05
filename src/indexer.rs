@@ -1,5 +1,5 @@
 /// Indexers for recognized mime types.
-use crate::common::{BoxedReader, ObjectMetadata, TransactionResult};
+use crate::common::{BoxedReader, ResourceMetadata, TransactionResult};
 use crate::fts::Fts;
 use async_std::io::{ReadExt, SeekFrom};
 use async_trait::async_trait;
@@ -11,7 +11,7 @@ use sqlx::{Sqlite, Transaction};
 pub trait Indexer {
     async fn index<'c>(
         &self,
-        meta: &ObjectMetadata,
+        meta: &ResourceMetadata,
         content: &mut BoxedReader,
         fts: &Fts,
         mut tx: Transaction<'c, Sqlite>,
@@ -22,14 +22,14 @@ pub trait Indexer {
 // Indexed properties are strings and string arrays members.
 pub struct FlatJsonIndexer {
     fields: Vec<String>,
-    mime_type: String,
+    family: String,
 }
 
 impl FlatJsonIndexer {
-    pub fn new(mime_type: &str, fields: &[&str]) -> Self {
+    pub fn new(family: &str, fields: &[&str]) -> Self {
         Self {
             fields: fields.iter().cloned().map(|e| e.to_owned()).collect(),
-            mime_type: mime_type.into(),
+            family: family.into(),
         }
     }
 }
@@ -38,13 +38,13 @@ impl FlatJsonIndexer {
 impl Indexer for FlatJsonIndexer {
     async fn index<'c>(
         &self,
-        meta: &ObjectMetadata,
+        meta: &ResourceMetadata,
         content: &mut BoxedReader,
         fts: &Fts,
         mut tx: Transaction<'c, Sqlite>,
     ) -> TransactionResult<'c> {
         // 0. Filer by mime type.
-        if self.mime_type != meta.mime_type() {
+        if self.family != meta.family() {
             return Ok(tx);
         }
 

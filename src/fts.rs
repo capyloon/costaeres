@@ -1,10 +1,10 @@
 /// A naive implementation of Full Text Search.
 /// The goal is to provide substring matching to object names and tags.
 ///
-/// Using a simple SQlite table (ObjectId, ngram) which makes it easy to
+/// Using a simple SQlite table (ResourceId, ngram) which makes it easy to
 /// manage object removal at the expense of disk space usage and query performance.
 /// TODO: switch to a Key Value store (eg. Sled) instead, or a fts engine like Sonic.
-use crate::common::{ObjectId, ObjectStoreError};
+use crate::common::{ResourceId, ResourceStoreError};
 use sqlx::{Sqlite, SqlitePool, Transaction};
 use std::collections::{HashMap, HashSet};
 
@@ -23,10 +23,10 @@ impl Fts {
 
     pub async fn add_text<'c>(
         &self,
-        id: ObjectId,
+        id: ResourceId,
         text: &str,
         mut tx: Transaction<'c, Sqlite>,
-    ) -> Result<Transaction<'c, Sqlite>, ObjectStoreError> {
+    ) -> Result<Transaction<'c, Sqlite>, ResourceStoreError> {
         let ngrams = ngrams(text, self.max_substring_len);
         // let mut tx = self.db_pool.begin().await?;
         for ngram in ngrams {
@@ -46,11 +46,11 @@ impl Fts {
     pub async fn search(
         &self,
         text: &str,
-        mime_type: Option<String>,
-    ) -> Result<Vec<(ObjectId, u32)>, ObjectStoreError> {
+        family: Option<String>,
+    ) -> Result<Vec<(ResourceId, u32)>, ResourceStoreError> {
         let mut tx = self.db_pool.begin().await?;
-        // Map ObjectId -> (ngram matches, frecency)
-        let mut res: HashMap<ObjectId, (usize, u32)> = HashMap::new();
+        // Map ResourceId -> (ngram matches, frecency)
+        let mut res: HashMap<ResourceId, (usize, u32)> = HashMap::new();
 
         let words = preprocess_text(text);
 
@@ -65,23 +65,25 @@ impl Fts {
                 frecency: i64,
             }
 
-            let records = match mime_type {
+            let records = match family {
                 None => {
-                    sqlx::query_as!(IdFrec,
-                        r#"SELECT objects.id, objects.frecency FROM objects
+                    sqlx::query_as!(
+                        IdFrec,
+                        r#"SELECT resources.id, resources.frecency FROM resources
             LEFT JOIN fts
-            WHERE fts.ngram = ? and fts.id = objects.id"#,
+            WHERE fts.ngram = ? and fts.id = resources.id"#,
                         word
                     )
                     .fetch_all(&mut tx)
                     .await?
                 }
-                Some(ref mime_type) => {
-                    sqlx::query_as!(IdFrec,
-                        r#"SELECT objects.id, objects.frecency FROM objects
+                Some(ref family) => {
+                    sqlx::query_as!(
+                        IdFrec,
+                        r#"SELECT resources.id, resources.frecency FROM resources
             LEFT JOIN fts
-            WHERE objects.mimeType = ? AND fts.ngram = ? AND fts.id = objects.id"#,
-                        mime_type,
+            WHERE resources.family = ? AND fts.ngram = ? AND fts.id = resources.id"#,
+                        family,
                         word
                     )
                     .fetch_all(&mut tx)
@@ -95,7 +97,7 @@ impl Fts {
             });
         }
 
-        let mut matches: Vec<(ObjectId, u32)> = res
+        let mut matches: Vec<(ResourceId, u32)> = res
             .iter()
             .filter_map(|item| {
                 if item.1 .0 == len {

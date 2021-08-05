@@ -3,7 +3,8 @@
 /// ${object.id}.meta for the metadata serialized as Json.
 /// ${object.id}.content for the opaque content.
 use crate::common::{
-    BoxedReader, ObjectId, ObjectKind, ObjectMetadata, ObjectStore, ObjectStoreError,
+    BoxedReader, ResourceId, ResourceKind, ResourceMetadata, ResourceStore, ResourceStoreError,
+    VariantContent,
 };
 use async_std::{
     fs,
@@ -16,7 +17,7 @@ use log::error;
 
 macro_rules! custom_error {
     ($error:expr) => {
-        Err(ObjectStoreError::Custom($error.into()))
+        Err(ResourceStoreError::Custom($error.into()))
     };
 }
 
@@ -26,7 +27,7 @@ pub struct FileStore {
 }
 
 impl FileStore {
-    pub async fn new<P>(path: P) -> Result<Self, ObjectStoreError>
+    pub async fn new<P>(path: P) -> Result<Self, ResourceStoreError>
     where
         P: AsRef<Path>,
     {
@@ -40,31 +41,36 @@ impl FileStore {
         Ok(Self { root })
     }
 
-    fn get_paths(&self, id: ObjectId) -> (PathBuf, PathBuf) {
+    fn meta_path(&self, id: ResourceId) -> PathBuf {
         let mut meta_path = self.root.clone();
         meta_path.push(&format!("{}.meta", id));
-        let mut content_path = self.root.clone();
-        content_path.push(&format!("{}.content", id));
-        (meta_path, content_path)
+        meta_path
     }
-}
 
-#[async_trait(?Send)]
-impl ObjectStore for FileStore {
-    async fn create(
+    fn variant_path(&self, id: ResourceId, variant: &str) -> PathBuf {
+        let mut content_path = self.root.clone();
+        content_path.push(&format!("{}.content.{}", id, variant));
+        content_path
+    }
+
+    async fn create_or_update(
         &self,
-        metadata: &ObjectMetadata,
-        content: Option<BoxedReader>,
-    ) -> Result<(), ObjectStoreError> {
+        metadata: &ResourceMetadata,
+        content: Option<VariantContent>,
+        create: bool,
+    ) -> Result<(), ResourceStoreError> {
         // 0. TODO: check if we have enough storage available.
 
-        let (meta_path, content_path) = self.get_paths(metadata.id());
+        let id = metadata.id();
+        let meta_path = self.meta_path(id);
 
-        // 1. Check if we already have files for this id, and bail out if so.
-        let file = File::open(&meta_path).await;
-        if file.is_ok() {
-            error!("Can't create two files with path {}", meta_path.display());
-            return Err(ObjectStoreError::ObjectAlreadyExists);
+        // 1. When creating, check if we already have files for this id, and bail out if so.
+        if create {
+            let file = File::open(&meta_path).await;
+            if file.is_ok() {
+                error!("Can't create two files with path {}", meta_path.display());
+                return Err(ResourceStoreError::ResourceAlreadyExists);
+            }
         }
 
         // 2. Store the metadata.
@@ -73,35 +79,51 @@ impl ObjectStore for FileStore {
         file.write_all(&meta).await?;
         file.sync_all().await?;
 
-        // 3. Store the content for leaf nodes.
+        // 3. Store the variants for leaf nodes.
+        if metadata.kind() != ResourceKind::Leaf {
+            return Ok(());
+        }
+
         if let Some(content) = content {
-            if metadata.kind() == ObjectKind::Leaf {
-                let mut file = File::create(&content_path).await?;
-                file.set_len(metadata.size() as _).await?;
-                futures::io::copy(content, &mut file).await?;
-                file.sync_all().await?;
+            let name = content.0.name();
+            if !metadata.has_variant(&name) {
+                error!("Variant '{}' is not in metadata.", name);
+                return Err(ResourceStoreError::InvalidVariant(name));
             }
+            let mut file = File::create(&self.variant_path(id, &name)).await?;
+            file.set_len(metadata.size() as _).await?;
+            futures::io::copy(content.1, &mut file).await?;
+            file.sync_all().await?;
         }
 
         Ok(())
     }
+}
+
+#[async_trait(?Send)]
+impl ResourceStore for FileStore {
+    async fn create(
+        &self,
+        metadata: &ResourceMetadata,
+        content: Option<VariantContent>,
+    ) -> Result<(), ResourceStoreError> {
+        self.create_or_update(metadata, content, true).await
+    }
 
     async fn update(
         &self,
-        metadata: &ObjectMetadata,
-        content: Option<BoxedReader>,
-    ) -> Result<(), ObjectStoreError> {
-        self.delete(metadata.id()).await?;
-        self.create(metadata, content).await?;
-        Ok(())
+        metadata: &ResourceMetadata,
+        content: Option<VariantContent>,
+    ) -> Result<(), ResourceStoreError> {
+        self.create_or_update(metadata, content, false).await
     }
 
-    async fn update_content_from_slice(
+    async fn update_default_variant_from_slice(
         &self,
-        id: ObjectId,
+        id: ResourceId,
         content: &[u8],
-    ) -> Result<(), ObjectStoreError> {
-        let (_, content_path) = self.get_paths(id);
+    ) -> Result<(), ResourceStoreError> {
+        let content_path = self.variant_path(id, "default");
         let mut file = File::create(&content_path).await?;
         futures::io::copy(content, &mut file).await?;
         file.sync_all().await?;
@@ -109,57 +131,85 @@ impl ObjectStore for FileStore {
         Ok(())
     }
 
-    async fn delete(&self, id: ObjectId) -> Result<(), ObjectStoreError> {
-        let (meta_path, content_path) = self.get_paths(id);
+    async fn delete(&self, id: ResourceId) -> Result<(), ResourceStoreError> {
+        // 1. get the metadata in order to know all the possible variants.
+        let metadata = self.get_metadata(id).await?;
+
+        // 2. remove the metadata.
+        let meta_path = self.meta_path(id);
         fs::remove_file(&meta_path).await?;
-        if Path::new(&content_path).exists().await {
-            fs::remove_file(&content_path).await?;
+
+        // 3. remove variants.
+        for variant in metadata.variants() {
+            let path = self.variant_path(id, &variant.name());
+            if Path::new(&path).exists().await {
+                fs::remove_file(&path).await?;
+            }
         }
         Ok(())
     }
 
-    async fn get_metadata(&self, id: ObjectId) -> Result<ObjectMetadata, ObjectStoreError> {
+    async fn delete_variant(
+        &self,
+        id: ResourceId,
+        variant: &str,
+    ) -> Result<(), ResourceStoreError> {
+        let path = self.variant_path(id, variant);
+        if Path::new(&path).exists().await {
+            fs::remove_file(&path).await?;
+        }
+        Ok(())
+    }
+
+    async fn get_metadata(&self, id: ResourceId) -> Result<ResourceMetadata, ResourceStoreError> {
         use async_std::io::ReadExt;
 
-        let (meta_path, _) = self.get_paths(id);
+        let meta_path = self.meta_path(id);
 
         let mut file = File::open(&meta_path)
             .await
-            .map_err(|_| ObjectStoreError::NoSuchObject)?;
+            .map_err(|_| ResourceStoreError::NoSuchResource)?;
         let mut buffer = vec![];
         file.read_to_end(&mut buffer).await?;
-        let metadata: ObjectMetadata = serde_json::from_slice(&buffer)?;
+        let metadata: ResourceMetadata = serde_json::from_slice(&buffer)?;
 
         Ok(metadata)
     }
 
     async fn get_full(
         &self,
-        id: ObjectId,
-    ) -> Result<(ObjectMetadata, BoxedReader), ObjectStoreError> {
+        id: ResourceId,
+        name: &str,
+    ) -> Result<(ResourceMetadata, BoxedReader), ResourceStoreError> {
         use async_std::io::ReadExt;
 
-        let (meta_path, content_path) = self.get_paths(id);
+        let meta_path = self.meta_path(id);
 
         let mut file = File::open(&meta_path)
             .await
-            .map_err(|_| ObjectStoreError::NoSuchObject)?;
+            .map_err(|_| ResourceStoreError::NoSuchResource)?;
         let mut buffer = vec![];
         file.read_to_end(&mut buffer).await?;
-        let metadata: ObjectMetadata = serde_json::from_slice(&buffer)?;
+        let metadata: ResourceMetadata = serde_json::from_slice(&buffer)?;
+
+        let content_path = self.variant_path(id, name);
         let file = File::open(&content_path)
             .await
-            .map_err(|_| ObjectStoreError::NoSuchObject)?;
+            .map_err(|_| ResourceStoreError::NoSuchResource)?;
 
         Ok((metadata, Box::new(file)))
     }
 
-    async fn get_content(&self, id: ObjectId) -> Result<BoxedReader, ObjectStoreError> {
-        let (_, content_path) = self.get_paths(id);
+    async fn get_variant(
+        &self,
+        id: ResourceId,
+        name: &str,
+    ) -> Result<BoxedReader, ResourceStoreError> {
+        let content_path = self.variant_path(id, name);
 
         let file = File::open(&content_path)
             .await
-            .map_err(|_| ObjectStoreError::NoSuchObject)?;
+            .map_err(|_| ResourceStoreError::NoSuchResource)?;
 
         Ok(Box::new(file))
     }
