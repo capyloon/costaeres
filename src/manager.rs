@@ -381,12 +381,12 @@ impl Manager {
         Ok(results)
     }
 
-    pub async fn by_text(&self, text: &str) -> Result<Vec<(ObjectId, u32)>, ObjectStoreError> {
+    pub async fn by_text(&self, text: &str, mime_type: Option<String>) -> Result<Vec<(ObjectId, u32)>, ObjectStoreError> {
         if text.trim().is_empty() {
             return Err(ObjectStoreError::Custom("EmptyTextQuery".into()));
         }
 
-        self.fts.search(text).await
+        self.fts.search(text, mime_type).await
     }
 
     pub async fn top_by_frecency(

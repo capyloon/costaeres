@@ -30,16 +30,24 @@ impl Fts {
         let ngrams = ngrams(text, self.max_substring_len);
         // let mut tx = self.db_pool.begin().await?;
         for ngram in ngrams {
-            sqlx::query!("INSERT OR IGNORE INTO fts ( id, ngram ) VALUES ( ?1, ?2 )", id, ngram)
-                .execute(&mut tx)
-                .await?;
+            sqlx::query!(
+                "INSERT OR IGNORE INTO fts ( id, ngram ) VALUES ( ?1, ?2 )",
+                id,
+                ngram
+            )
+            .execute(&mut tx)
+            .await?;
         }
 
         Ok(tx)
     }
 
     // Return objects that have a match for all tokens, ordered by frecency.
-    pub async fn search(&self, text: &str) -> Result<Vec<(ObjectId, u32)>, ObjectStoreError> {
+    pub async fn search(
+        &self,
+        text: &str,
+        mime_type: Option<String>,
+    ) -> Result<Vec<(ObjectId, u32)>, ObjectStoreError> {
         let mut tx = self.db_pool.begin().await?;
         // Map ObjectId -> (ngram matches, frecency)
         let mut res: HashMap<ObjectId, (usize, u32)> = HashMap::new();
@@ -52,16 +60,35 @@ impl Fts {
                 word = word[0..self.max_substring_len].to_owned();
             }
 
-            sqlx::query!(
-                r#"SELECT objects.id, objects.frecency FROM objects
+            struct IdFrec {
+                id: i64,
+                frecency: i64,
+            }
+
+            let records = match mime_type {
+                None => {
+                    sqlx::query_as!(IdFrec,
+                        r#"SELECT objects.id, objects.frecency FROM objects
             LEFT JOIN fts
             WHERE fts.ngram = ? and fts.id = objects.id"#,
-                word
-            )
-            .fetch_all(&mut tx)
-            .await?
-            .iter()
-            .for_each(|r| {
+                        word
+                    )
+                    .fetch_all(&mut tx)
+                    .await?
+                }
+                Some(ref mime_type) => {
+                    sqlx::query_as!(IdFrec,
+                        r#"SELECT objects.id, objects.frecency FROM objects
+            LEFT JOIN fts
+            WHERE objects.mimeType = ? AND fts.ngram = ? AND fts.id = objects.id"#,
+                        mime_type,
+                        word
+                    )
+                    .fetch_all(&mut tx)
+                    .await?
+                }
+            };
+            records.iter().for_each(|r| {
                 res.entry(r.id.into())
                     .and_modify(|e| (*e).0 += 1)
                     .or_insert((1, r.frecency as _));

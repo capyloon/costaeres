@@ -380,22 +380,22 @@ async fn search_by_text() {
 
     create_hierarchy(&manager).await;
 
-    let results = manager.by_text("no-match").await.unwrap();
+    let results = manager.by_text("no-match", None).await.unwrap();
     assert_eq!(results.len(), 0);
 
-    let results = manager.by_text("cont").await.unwrap();
+    let results = manager.by_text("cont", None).await.unwrap();
     assert_eq!(results.len(), 1);
 
-    let results = manager.by_text("child").await.unwrap();
+    let results = manager.by_text("child", None).await.unwrap();
     assert_eq!(results.len(), 20);
 
-    let results = manager.by_text("child #27").await.unwrap();
+    let results = manager.by_text("child #27", None).await.unwrap();
     assert_eq!(results.len(), 1);
 
-    let results = manager.by_text("child #27 #27").await.unwrap();
+    let results = manager.by_text("child #27 #27", None).await.unwrap();
     assert_eq!(results.len(), 1);
 
-    let results = manager.by_text("child #17").await.unwrap();
+    let results = manager.by_text("child #17", None).await.unwrap();
     assert_eq!(results.len(), 0);
 }
 
@@ -473,11 +473,17 @@ async fn index_places() {
         .unwrap();
 
     // Found in the url.
-    let results = manager.by_text("example").await.unwrap();
+    let results = manager
+        .by_text("example", Some("application/x-places+json".into()))
+        .await
+        .unwrap();
     assert_eq!(results.len(), 1);
 
     // Found in the title.
-    let results = manager.by_text("web").await.unwrap();
+    let results = manager
+        .by_text("web", Some("application/x-places+json".into()))
+        .await
+        .unwrap();
     assert_eq!(results.len(), 1);
 
     // Update the object with new content.
@@ -490,26 +496,41 @@ async fn index_places() {
         .unwrap();
 
     // Found in the url.
-    let results = manager.by_text("example").await.unwrap();
+    let results = manager
+        .by_text("example", Some("application/x-places+json".into()))
+        .await
+        .unwrap();
     assert_eq!(results.len(), 1);
 
     // Not found in the title anymore.
-    let results = manager.by_text("web").await.unwrap();
+    let results = manager
+        .by_text("web", Some("application/x-places+json".into()))
+        .await
+        .unwrap();
     assert_eq!(results.len(), 0);
 
     // Found in the new title.
-    let results = manager.by_text("new").await.unwrap();
+    let results = manager
+        .by_text("new", Some("application/x-places+json".into()))
+        .await
+        .unwrap();
     assert_eq!(results.len(), 1);
 
     // Delete the object, removing the associated text index.
     manager.delete(leaf_meta.id()).await.unwrap();
 
     // Used to be found in the url.
-    let results = manager.by_text("example").await.unwrap();
+    let results = manager
+        .by_text("example", Some("application/x-places+json".into()))
+        .await
+        .unwrap();
     assert_eq!(results.len(), 0);
 
     // Used to be found in the title.
-    let results = manager.by_text("new").await.unwrap();
+    let results = manager
+        .by_text("new", Some("application/x-places+json".into()))
+        .await
+        .unwrap();
     assert_eq!(results.len(), 0);
 }
 
@@ -541,19 +562,31 @@ async fn index_contacts() {
         .unwrap();
 
     // Found in the name.
-    let results = manager.by_text("jean").await.unwrap();
+    let results = manager
+        .by_text("jean", Some("application/x-contacts+json".into()))
+        .await
+        .unwrap();
     assert_eq!(results.len(), 1);
 
     // Found in the phone number.
-    let results = manager.by_text("4567").await.unwrap();
+    let results = manager
+        .by_text("4567", Some("application/x-contacts+json".into()))
+        .await
+        .unwrap();
     assert_eq!(results.len(), 1);
 
     // Found in the name and email.
-    let results = manager.by_text("dupont").await.unwrap();
+    let results = manager
+        .by_text("dupont", Some("application/x-contacts+json".into()))
+        .await
+        .unwrap();
     assert_eq!(results.len(), 1);
 
     // Found in the email.
-    let results = manager.by_text("secret").await.unwrap();
+    let results = manager
+        .by_text("secret", Some("application/x-contacts+json".into()))
+        .await
+        .unwrap();
     assert_eq!(results.len(), 1);
 }
 
