@@ -5,7 +5,6 @@ CREATE TABLE IF NOT EXISTS resources
     parent   INTEGER  KEY NOT NULL,
     kind     INTEGER  NOT NULL,
     name     TEXT     KEY NOT NULL,
-    family   TEXT     KEY NOT NULL,
     created  DATETIME NOT NULL,
     modified DATETIME NOT NULL,
     scorer   TEXT     NOT NULL,
@@ -14,7 +13,6 @@ CREATE TABLE IF NOT EXISTS resources
     UNIQUE(parent , name)
 );
 
-CREATE INDEX IF NOT EXISTS idx_res_family ON resources(family);
 CREATE INDEX IF NOT EXISTS idx_res_name ON resources(name);
 
 CREATE TABLE IF NOT EXISTS tags

@@ -22,14 +22,14 @@ pub trait Indexer {
 // Indexed properties are strings and string arrays members.
 pub struct FlatJsonIndexer {
     fields: Vec<String>,
-    family: String,
+    tag: String,
 }
 
 impl FlatJsonIndexer {
-    pub fn new(family: &str, fields: &[&str]) -> Self {
+    pub fn new(tag: &str, fields: &[&str]) -> Self {
         Self {
             fields: fields.iter().cloned().map(|e| e.to_owned()).collect(),
-            family: family.into(),
+            tag: tag.into(),
         }
     }
 }
@@ -44,7 +44,7 @@ impl Indexer for FlatJsonIndexer {
         mut tx: Transaction<'c, Sqlite>,
     ) -> TransactionResult<'c> {
         // 0. Filer by mime type.
-        if self.family != meta.family() {
+        if !meta.has_tag(&self.tag) {
             return Ok(tx);
         }
 
@@ -81,12 +81,12 @@ impl Indexer for FlatJsonIndexer {
 // This is a json value with the following format:
 // { url: "...", title: "...", icon: "..." }
 pub fn create_places_indexer() -> FlatJsonIndexer {
-    FlatJsonIndexer::new("application/x-places+json", &["url", "title"])
+    FlatJsonIndexer::new("places", &["url", "title"])
 }
 
 // Indexer for the content of a "Contacts" object.
 // This is a json value with the following format:
 // { name: "...", phone: "[...]", email: "[...]" }
 pub fn create_contacts_indexer() -> FlatJsonIndexer {
-    FlatJsonIndexer::new("application/x-contacts+json", &["name", "phone", "email"])
+    FlatJsonIndexer::new("contact", &["name", "phone", "email"])
 }

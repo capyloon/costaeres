@@ -46,7 +46,7 @@ impl Fts {
     pub async fn search(
         &self,
         text: &str,
-        family: Option<String>,
+        tag: Option<String>,
     ) -> Result<Vec<(ResourceId, u32)>, ResourceStoreError> {
         let mut tx = self.db_pool.begin().await?;
         // Map ResourceId -> (ngram matches, frecency)
@@ -65,25 +65,26 @@ impl Fts {
                 frecency: i64,
             }
 
-            let records = match family {
+            let records = match tag {
                 None => {
                     sqlx::query_as!(
                         IdFrec,
                         r#"SELECT resources.id, resources.frecency FROM resources
-            LEFT JOIN fts
-            WHERE fts.ngram = ? and fts.id = resources.id"#,
+                        LEFT JOIN fts
+                        WHERE fts.ngram = ? and fts.id = resources.id"#,
                         word
                     )
                     .fetch_all(&mut tx)
                     .await?
                 }
-                Some(ref family) => {
+                Some(ref tag) => {
                     sqlx::query_as!(
                         IdFrec,
                         r#"SELECT resources.id, resources.frecency FROM resources
-            LEFT JOIN fts
-            WHERE resources.family = ? AND fts.ngram = ? AND fts.id = resources.id"#,
-                        family,
+                        LEFT JOIN fts, tags
+                        WHERE tags.tag = ? AND fts.ngram = ?
+                        AND fts.id = resources.id AND tags.id = resources.id"#,
+                        tag,
                         word
                     )
                     .fetch_all(&mut tx)

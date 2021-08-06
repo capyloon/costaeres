@@ -36,7 +36,6 @@ async fn file_store() {
         ROOT_ID,
         ResourceKind::Leaf,
         "object 0",
-        "text/plain",
         vec!["one".into(), "two".into()],
         vec![default_variant()],
     );
@@ -65,7 +64,6 @@ async fn file_store() {
         ROOT_ID,
         ResourceKind::Leaf,
         "object 0 updated",
-        "text/plain",
         vec!["one".into(), "two".into()],
         vec![default_variant()],
     );

@@ -37,6 +37,13 @@ impl VisitEntry {
             priority,
         }
     }
+
+    pub fn now(priority: VisitPriority) -> Self {
+        Self {
+            timestamp: Utc::now(),
+            priority,
+        }
+    }
 }
 
 #[derive(Debug, Deserialize, Serialize)]

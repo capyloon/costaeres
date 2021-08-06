@@ -106,7 +106,6 @@ pub struct ResourceMetadata {
     parent: ResourceId,
     kind: ResourceKind,
     name: String,
-    family: String,
     tags: Vec<String>,
     variants: Vec<Variant>,
     created: DateTime<Utc>,
@@ -120,7 +119,6 @@ impl ResourceMetadata {
         parent: ResourceId,
         kind: ResourceKind,
         name: &str,
-        family: &str,
         tags: Vec<String>,
         variants: Vec<Variant>,
     ) -> Self {
@@ -129,7 +127,6 @@ impl ResourceMetadata {
             parent,
             kind,
             name: name.into(),
-            family: family.into(),
             tags,
             variants,
             created: Utc::now(),
@@ -140,6 +137,10 @@ impl ResourceMetadata {
 
     pub fn has_variant(&self, name: &str) -> bool {
         self.variants.iter().any(|item| item.name() == name)
+    }
+
+    pub fn has_tag(&self, tag: &str) -> bool {
+        self.tags.iter().any(|item| item == tag)
     }
 
     pub fn id(&self) -> ResourceId {
@@ -156,14 +157,6 @@ impl ResourceMetadata {
 
     pub fn name(&self) -> String {
         self.name.clone()
-    }
-
-    pub fn family(&self) -> String {
-        self.family.clone()
-    }
-
-    pub fn set_family(&mut self, family: &str) {
-        self.family = family.into();
     }
 
     // Returns a JSON representation of the score, to store in the DB.
@@ -236,6 +229,16 @@ impl ResourceMetadata {
                 }
             })
             .collect();
+    }
+
+    pub fn mime_type_for_variant(&self, variant_name: &str) -> Option<String> {
+        for variant in &self.variants {
+            if variant.name() == variant_name {
+                return Some(variant.mime_type());
+            }
+        }
+
+        None
     }
 }
 

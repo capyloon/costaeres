@@ -53,7 +53,6 @@ async fn create_hierarchy(manager: &Manager) {
         ROOT_ID,
         ResourceKind::Container,
         "container",
-        "text/plain",
         vec![],
         vec![],
     );
@@ -73,7 +72,6 @@ async fn create_hierarchy(manager: &Manager) {
                 ResourceKind::Leaf
             },
             &format!("child #{}", i),
-            "text/plain",
             vec![],
             vec![default_variant()],
         );
@@ -90,7 +88,6 @@ async fn create_hierarchy(manager: &Manager) {
             10.into(),
             ResourceKind::Leaf,
             &format!("child #{}", i),
-            "text/plain",
             vec!["sub-child".into()],
             vec![default_variant()],
         );
@@ -115,7 +112,6 @@ async fn basic_manager() {
         ROOT_ID,
         ResourceKind::Leaf,
         "object 0",
-        "text/plain",
         vec!["one".into(), "two".into()],
         vec![default_variant()],
     );
@@ -139,7 +135,6 @@ async fn basic_manager() {
         ROOT_ID,
         ResourceKind::Leaf,
         "object 0 updated",
-        "text/plain",
         vec!["one".into(), "two".into(), "three".into()],
         vec![default_variant()],
     );
@@ -169,7 +164,6 @@ async fn rehydrate_single() {
         ROOT_ID,
         ResourceKind::Leaf,
         "object 0",
-        "text/plain",
         vec!["one".into(), "two".into()],
         vec![default_variant()],
     );
@@ -197,7 +191,6 @@ async fn check_constraints() {
         1.into(),
         ResourceKind::Leaf,
         "object 0",
-        "text/plain",
         vec![],
         vec![],
     );
@@ -214,7 +207,6 @@ async fn check_constraints() {
         ROOT_ID,
         ResourceKind::Leaf,
         "leaf 1",
-        "text/plain",
         vec![],
         vec![default_variant()],
     );
@@ -229,7 +221,6 @@ async fn check_constraints() {
         ROOT_ID,
         ResourceKind::Container,
         "root",
-        "text/plain",
         vec![],
         vec![default_variant()],
     );
@@ -250,7 +241,6 @@ async fn check_constraints() {
         2.into(),
         ResourceKind::Leaf,
         "leaf 1",
-        "text/plain",
         vec![],
         vec![default_variant()],
     );
@@ -341,10 +331,7 @@ async fn search_by_name() {
     assert_eq!(results.len(), 1);
     assert_eq!(results[0], 12.into());
 
-    let results = manager
-        .by_name("child #12", Some("text/plain"))
-        .await
-        .unwrap();
+    let results = manager.by_name("child #12", None).await.unwrap();
     assert_eq!(results.len(), 1);
     assert_eq!(results[0], 12.into());
 
@@ -363,25 +350,12 @@ async fn search_by_tag() {
 
     create_hierarchy(&manager).await;
 
-    let results = manager.by_tag("no-such-tag", None).await.unwrap();
+    let results = manager.by_tag("no-such-tag").await.unwrap();
     assert_eq!(results.len(), 0);
 
-    let results = manager.by_tag("sub-child", None).await.unwrap();
+    let results = manager.by_tag("sub-child").await.unwrap();
     assert_eq!(results.len(), 10);
     assert_eq!(results[0], 25.into());
-
-    let results = manager
-        .by_tag("sub-child", Some("text/plain"))
-        .await
-        .unwrap();
-    assert_eq!(results.len(), 10);
-    assert_eq!(results[0], 25.into());
-
-    let results = manager
-        .by_tag("sub-child", Some("image/png"))
-        .await
-        .unwrap();
-    assert_eq!(results.len(), 0);
 }
 
 #[async_std::test]
@@ -470,8 +444,7 @@ async fn index_places() {
         ROOT_ID,
         ResourceKind::Leaf,
         "ecdf525a-e5d6-11eb-9c9b-d3fd1d0ea335",
-        "application/x-places+json",
-        vec![],
+        vec!["places".into()],
         vec![default_variant()],
     );
 
@@ -492,16 +465,13 @@ async fn index_places() {
 
     // Found in the url.
     let results = manager
-        .by_text("example", Some("application/x-places+json".into()))
+        .by_text("example", Some("places".into()))
         .await
         .unwrap();
     assert_eq!(results.len(), 1);
 
     // Found in the title.
-    let results = manager
-        .by_text("web", Some("application/x-places+json".into()))
-        .await
-        .unwrap();
+    let results = manager.by_text("web", Some("places".into())).await.unwrap();
     assert_eq!(results.len(), 1);
 
     // Update the object with new content.
@@ -521,23 +491,17 @@ async fn index_places() {
 
     // Found in the url.
     let results = manager
-        .by_text("example", Some("application/x-places+json".into()))
+        .by_text("example", Some("places".into()))
         .await
         .unwrap();
     assert_eq!(results.len(), 1);
 
     // Not found in the title anymore.
-    let results = manager
-        .by_text("web", Some("application/x-places+json".into()))
-        .await
-        .unwrap();
+    let results = manager.by_text("web", Some("places".into())).await.unwrap();
     assert_eq!(results.len(), 0);
 
     // Found in the new title.
-    let results = manager
-        .by_text("new", Some("application/x-places+json".into()))
-        .await
-        .unwrap();
+    let results = manager.by_text("new", Some("places".into())).await.unwrap();
     assert_eq!(results.len(), 1);
 
     // Delete the object, removing the associated text index.
@@ -545,16 +509,13 @@ async fn index_places() {
 
     // Used to be found in the url.
     let results = manager
-        .by_text("example", Some("application/x-places+json".into()))
+        .by_text("example", Some("places".into()))
         .await
         .unwrap();
     assert_eq!(results.len(), 0);
 
     // Used to be found in the title.
-    let results = manager
-        .by_text("new", Some("application/x-places+json".into()))
-        .await
-        .unwrap();
+    let results = manager.by_text("new", Some("places".into())).await.unwrap();
     assert_eq!(results.len(), 0);
 }
 
@@ -571,12 +532,11 @@ async fn index_contacts() {
         ROOT_ID,
         ResourceKind::Leaf,
         "ecdf525a-e5d6-11eb-9c9b-d3fd1d0ea335",
-        "application/x-contacts+json",
-        vec![],
+        vec!["contact".into()],
         vec![default_variant()],
     );
 
-    let places1 = fs::File::open("./test-fixtures/contacts-1.json")
+    let contacts = fs::File::open("./test-fixtures/contacts-1.json")
         .await
         .unwrap();
 
@@ -585,7 +545,7 @@ async fn index_contacts() {
             &leaf_meta,
             Some(VariantContent::new(
                 named_variant("default"),
-                Box::new(places1),
+                Box::new(contacts),
             )),
         )
         .await
@@ -593,28 +553,28 @@ async fn index_contacts() {
 
     // Found in the name.
     let results = manager
-        .by_text("jean", Some("application/x-contacts+json".into()))
+        .by_text("jean", Some("contact".into()))
         .await
         .unwrap();
     assert_eq!(results.len(), 1);
 
     // Found in the phone number.
     let results = manager
-        .by_text("4567", Some("application/x-contacts+json".into()))
+        .by_text("4567", Some("contact".into()))
         .await
         .unwrap();
     assert_eq!(results.len(), 1);
 
     // Found in the name and email.
     let results = manager
-        .by_text("dupont", Some("application/x-contacts+json".into()))
+        .by_text("dupont", Some("contact".into()))
         .await
         .unwrap();
     assert_eq!(results.len(), 1);
 
     // Found in the email.
     let results = manager
-        .by_text("secret", Some("application/x-contacts+json".into()))
+        .by_text("secret", Some("contact".into()))
         .await
         .unwrap();
     assert_eq!(results.len(), 1);
@@ -671,7 +631,6 @@ async fn unique_children_names() {
         ROOT_ID,
         ResourceKind::Leaf,
         "file.txt",
-        "text/plain",
         vec![],
         vec![],
     );
@@ -698,7 +657,6 @@ async fn child_by_name() {
         ROOT_ID,
         ResourceKind::Leaf,
         "file.txt",
-        "text/plain",
         vec![],
         vec![],
     );
@@ -710,7 +668,6 @@ async fn child_by_name() {
         ROOT_ID,
         ResourceKind::Leaf,
         "photo.png",
-        "image/png",
         vec![],
         vec![],
     );
@@ -718,10 +675,10 @@ async fn child_by_name() {
     manager.create(&leaf_meta, None).await.unwrap();
 
     let file = manager.child_by_name(ROOT_ID, "file.txt").await.unwrap();
-    assert_eq!(file.family(), "text/plain");
+    assert_eq!(file.name(), "file.txt");
 
     let image = manager.child_by_name(ROOT_ID, "photo.png").await.unwrap();
-    assert_eq!(image.family(), "image/png");
+    assert_eq!(image.name(), "photo.png");
 }
 
 #[async_std::test]
@@ -749,4 +706,22 @@ async fn migration_check() {
 
         manager.close().await;
     }
+}
+
+#[async_std::test]
+async fn frecency_update() {
+    let (config, store) = prepare_test(18).await;
+
+    let manager = Manager::new(config.clone(), Box::new(store.clone())).await;
+    assert!(manager.is_ok(), "Failed to create first manager");
+    let manager = manager.unwrap();
+
+    manager.create_root().await.unwrap();
+
+    let mut meta = manager.get_metadata(ROOT_ID).await.unwrap();
+    assert_eq!(meta.scorer().frecency(), 0);
+
+    manager.visit(&mut meta, &VisitEntry::now(VisitPriority::Normal)).await.unwrap();
+    let meta = manager.get_metadata(ROOT_ID).await.unwrap();
+    assert_eq!(meta.scorer().frecency(), 100);
 }

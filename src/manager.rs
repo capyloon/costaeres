@@ -22,6 +22,7 @@ use crate::common::{
 use crate::config::Config;
 use crate::fts::Fts;
 use crate::indexer::Indexer;
+use crate::scorer::VisitEntry;
 use async_std::fs::File;
 use bincode::Options;
 use chrono::{DateTime, Utc};
@@ -63,6 +64,30 @@ impl Manager {
         })
     }
 
+    /// Update the frecency for that metadata.
+    pub async fn visit(
+        &self,
+        metadata: &mut ResourceMetadata,
+        visit: &VisitEntry,
+    ) -> Result<(), ResourceStoreError> {
+        metadata.update_scorer(visit);
+
+        let id = metadata.id();
+        let scorer = metadata.db_scorer();
+        let frecency = metadata.scorer().frecency();
+        // We only need to update the scorer and frecency, so not doing a full update here.
+        sqlx::query!(
+            "UPDATE OR REPLACE resources SET scorer = ?, frecency = ? WHERE id = ?",
+            scorer,
+            frecency,
+            id
+        )
+        .execute(&self.db_pool)
+        .await?;
+
+        Ok(())
+    }
+
     /// Use a existing transation to run the sql commands needed to create a metadata record.
     async fn create_metadata<'c>(
         &self,
@@ -73,21 +98,19 @@ impl Manager {
         let parent = metadata.parent();
         let kind = metadata.kind();
         let name = metadata.name();
-        let family = metadata.family();
         let created = metadata.created();
         let modified = metadata.modified();
         let scorer = metadata.db_scorer();
         let frecency = metadata.scorer().frecency();
         sqlx::query!(
             r#"
-    INSERT INTO resources ( id, parent, kind, name, family,  created, modified, scorer, frecency )
-    VALUES ( ?, ?, ?, ?, ?, ?, ?, ?, ? )
+    INSERT INTO resources ( id, parent, kind, name,   created, modified, scorer, frecency )
+    VALUES ( ?, ?, ?, ?, ?, ?, ?, ? )
             "#,
             id,
             parent,
             kind,
             name,
-            family,
             created,
             modified,
             scorer,
@@ -250,7 +273,6 @@ impl Manager {
             0.into(),
             ResourceKind::Container,
             "/",
-            "<root>",
             vec![],
             vec![Variant::new("default", "inode/directory", 0)],
         );
@@ -292,22 +314,23 @@ impl Manager {
         Ok(res)
     }
 
-    // Retrieve the list of objects matching the given name, optionnaly restricted to a given mime type.
+    // Retrieve the list of objects matching the given name, optionnaly restricted to a given tag.
     // TODO: pagination
     pub async fn by_name(
         &self,
         name: &str,
-        mime: Option<&str>,
+        tag: Option<&str>,
     ) -> Result<Vec<ResourceId>, ResourceStoreError> {
         if name.trim().is_empty() {
             return Err(ResourceStoreError::Custom("EmptyNameQuery".into()));
         }
 
-        let results: Vec<ResourceId> = if let Some(mime) = mime {
+        let results: Vec<ResourceId> = if let Some(tag) = tag {
             sqlx::query!(
-                "SELECT id FROM resources WHERE name = ? and family = ? ORDER BY frecency DESC",
+                "SELECT resources.id FROM resources LEFT JOIN tags
+                WHERE tags.tag = ? AND name = ? AND tags.id = resources.id ORDER BY frecency DESC",
                 name,
-                mime
+                tag
             )
             .fetch_all(&self.db_pool)
             .await?
@@ -353,45 +376,25 @@ impl Manager {
         }
     }
 
-    // Retrieve the list of objects matching the given tag, optionnaly restricted to a given mime type.
+    // Retrieve the list of objects matching the given tag.
     // TODO: pagination
-    pub async fn by_tag(
-        &self,
-        tag: &str,
-        mime: Option<&str>,
-    ) -> Result<Vec<ResourceId>, ResourceStoreError> {
+    pub async fn by_tag(&self, tag: &str) -> Result<Vec<ResourceId>, ResourceStoreError> {
         if tag.trim().is_empty() {
             return Err(ResourceStoreError::Custom("EmptyTagQuery".into()));
         }
 
-        let results: Vec<ResourceId> = if let Some(mime) = mime {
-            sqlx::query!(
-                r#"SELECT resources.id FROM resources
-                   LEFT JOIN tags
-                   WHERE tags.tag = ? and tags.id = resources.id and resources.family = ?
-                   ORDER BY frecency DESC"#,
-                tag,
-                mime
-            )
-            .fetch_all(&self.db_pool)
-            .await?
-            .iter()
-            .map(|r| r.id.into())
-            .collect()
-        } else {
-            sqlx::query!(
-                r#"SELECT resources.id FROM resources
+        let results: Vec<ResourceId> = sqlx::query!(
+            r#"SELECT resources.id FROM resources
             LEFT JOIN tags
             WHERE tags.tag = ? and tags.id = resources.id
             ORDER BY frecency DESC"#,
-                tag
-            )
-            .fetch_all(&self.db_pool)
-            .await?
-            .iter()
-            .map(|r| r.id.into())
-            .collect()
-        };
+            tag
+        )
+        .fetch_all(&self.db_pool)
+        .await?
+        .iter()
+        .map(|r| r.id.into())
+        .collect();
 
         Ok(results)
     }
@@ -399,13 +402,13 @@ impl Manager {
     pub async fn by_text(
         &self,
         text: &str,
-        family: Option<String>,
+        tag: Option<String>,
     ) -> Result<Vec<(ResourceId, u32)>, ResourceStoreError> {
         if text.trim().is_empty() {
             return Err(ResourceStoreError::Custom("EmptyTextQuery".into()));
         }
 
-        self.fts.search(text, family).await
+        self.fts.search(text, tag).await
     }
 
     pub async fn top_by_frecency(
@@ -642,7 +645,7 @@ impl Manager {
         // Metadata can be retrieved fully from the SQL database.
         match sqlx::query!(
             r#"
-    SELECT id, parent, kind, name, family, created, modified, scorer FROM resources
+    SELECT id, parent, kind, name, created, modified, scorer FROM resources
     WHERE id = ?"#,
             id
         )
@@ -655,7 +658,6 @@ impl Manager {
                     record.parent.into(),
                     record.kind.into(),
                     &record.name,
-                    &record.family,
                     vec![],
                     vec![],
                 );
