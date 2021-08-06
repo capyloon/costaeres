@@ -42,7 +42,7 @@ impl Manager {
         store: Box<dyn ResourceStore + Send + Sync>,
     ) -> Result<Self, ResourceStoreError> {
         // Create db file if needed.
-        if let Err(_) = File::open(&config.db_path).await {
+        if File::open(&config.db_path).await.is_err() {
             let _file = File::create(&config.db_path).await?;
         }
 
@@ -443,7 +443,7 @@ impl Manager {
         }
 
         for indexer in &self.indexers {
-            tx = indexer.index(&metadata, content, &self.fts, tx).await?
+            tx = indexer.index(metadata, content, &self.fts, tx).await?
         }
 
         Ok(tx)
@@ -485,7 +485,7 @@ impl Manager {
 
         // If there is content run the text indexer for this mime type.
         let tx3 = if let Some(ref mut content) = content {
-            self.update_text_index(&metadata, &mut content.1, tx2)
+            self.update_text_index(metadata, &mut content.1, tx2)
                 .await?
         } else {
             tx2
@@ -525,7 +525,7 @@ impl Manager {
 
         // If there is content, run the text indexer for this mime type.
         let tx3 = if let Some(ref mut content) = content {
-            self.update_text_index(&metadata, &mut content.1, tx2)
+            self.update_text_index(metadata, &mut content.1, tx2)
                 .await?
         } else {
             tx2

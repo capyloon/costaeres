@@ -28,9 +28,9 @@ impl From<i64> for ResourceId {
     }
 }
 
-impl Into<i64> for ResourceId {
-    fn into(self) -> i64 {
-        self.0
+impl From<ResourceId> for i64 {
+    fn from(val: ResourceId) -> i64 {
+        val.0
     }
 }
 
@@ -116,6 +116,7 @@ pub struct ResourceMetadata {
 }
 
 impl ResourceMetadata {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         id: ResourceId,
         parent: ResourceId,
@@ -193,7 +194,7 @@ impl ResourceMetadata {
 
     // Set the scorer using the json serialized representation.
     pub fn set_scorer_from_db(&mut self, scorer: &str) {
-        self.scorer = serde_json::from_str(&scorer).unwrap_or_default();
+        self.scorer = serde_json::from_str(scorer).unwrap_or_default();
     }
 
     pub fn created(&self) -> DateTime<Utc> {

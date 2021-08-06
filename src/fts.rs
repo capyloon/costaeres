@@ -4,7 +4,7 @@
 /// Using a simple SQlite table (ResourceId, ngram) which makes it easy to
 /// manage object removal at the expense of disk space usage and query performance.
 /// TODO: switch to a Key Value store (eg. Sled) instead, or a fts engine like Sonic.
-use crate::common::{ResourceId, ResourceStoreError};
+use crate::common::{ResourceId, ResourceStoreError, TransactionResult};
 use sqlx::{Sqlite, SqlitePool, Transaction};
 use std::collections::{HashMap, HashSet};
 
@@ -26,7 +26,7 @@ impl Fts {
         id: ResourceId,
         text: &str,
         mut tx: Transaction<'c, Sqlite>,
-    ) -> Result<Transaction<'c, Sqlite>, ResourceStoreError> {
+    ) -> TransactionResult<'c> {
         let ngrams = ngrams(text, self.max_substring_len);
         // let mut tx = self.db_pool.begin().await?;
         for ngram in ngrams {

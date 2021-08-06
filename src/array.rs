@@ -70,7 +70,7 @@ impl Read for Array {
         }
 
         me.pos += to_read as u64;
-        return Poll::Ready(Ok(to_read));
+        Poll::Ready(Ok(to_read))
     }
 }
 
