@@ -74,22 +74,20 @@ impl Manager {
         let kind = metadata.kind();
         let name = metadata.name();
         let family = metadata.family();
-        let size = metadata.size() as i64;
         let created = metadata.created();
         let modified = metadata.modified();
         let scorer = metadata.db_scorer();
         let frecency = metadata.scorer().frecency();
         sqlx::query!(
             r#"
-    INSERT INTO resources ( id, parent, kind, name, family, size, created, modified, scorer, frecency )
-    VALUES ( ?, ?, ?, ?, ?, ?, ?, ?, ?, ? )
+    INSERT INTO resources ( id, parent, kind, name, family,  created, modified, scorer, frecency )
+    VALUES ( ?, ?, ?, ?, ?, ?, ?, ?, ? )
             "#,
             id,
             parent,
             kind,
             name,
             family,
-            size,
             created,
             modified,
             scorer,
@@ -251,7 +249,6 @@ impl Manager {
             0.into(),
             0.into(),
             ResourceKind::Container,
-            0,
             "/",
             "<root>",
             vec![],
@@ -645,7 +642,7 @@ impl Manager {
         // Metadata can be retrieved fully from the SQL database.
         match sqlx::query!(
             r#"
-    SELECT id, parent, kind, name, family, size, created, modified, scorer FROM resources
+    SELECT id, parent, kind, name, family, created, modified, scorer FROM resources
     WHERE id = ?"#,
             id
         )
@@ -657,7 +654,6 @@ impl Manager {
                     record.id.into(),
                     record.parent.into(),
                     record.kind.into(),
-                    record.size,
                     &record.name,
                     &record.family,
                     vec![],

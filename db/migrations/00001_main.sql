@@ -6,7 +6,6 @@ CREATE TABLE IF NOT EXISTS resources
     kind     INTEGER  NOT NULL,
     name     TEXT     KEY NOT NULL,
     family   TEXT     KEY NOT NULL,
-    size     INTEGER  NOT NULL,
     created  DATETIME NOT NULL,
     modified DATETIME NOT NULL,
     scorer   TEXT     NOT NULL,

@@ -91,7 +91,7 @@ impl FileStore {
                 return Err(ResourceStoreError::InvalidVariant(name));
             }
             let mut file = File::create(&self.variant_path(id, &name)).await?;
-            file.set_len(metadata.size() as _).await?;
+            file.set_len(content.0.size() as _).await?;
             futures::io::copy(content.1, &mut file).await?;
             file.sync_all().await?;
         }

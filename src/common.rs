@@ -105,7 +105,6 @@ pub struct ResourceMetadata {
     id: ResourceId,
     parent: ResourceId,
     kind: ResourceKind,
-    size: i64,
     name: String,
     family: String,
     tags: Vec<String>,
@@ -116,12 +115,10 @@ pub struct ResourceMetadata {
 }
 
 impl ResourceMetadata {
-    #[allow(clippy::too_many_arguments)]
     pub fn new(
         id: ResourceId,
         parent: ResourceId,
         kind: ResourceKind,
-        size: i64,
         name: &str,
         family: &str,
         tags: Vec<String>,
@@ -131,7 +128,6 @@ impl ResourceMetadata {
             id,
             parent,
             kind,
-            size,
             name: name.into(),
             family: family.into(),
             tags,
@@ -156,14 +152,6 @@ impl ResourceMetadata {
 
     pub fn kind(&self) -> ResourceKind {
         self.kind
-    }
-
-    pub fn size(&self) -> i64 {
-        self.size
-    }
-
-    pub fn set_size(&mut self, size: i64) {
-        self.size = size;
     }
 
     pub fn name(&self) -> String {
