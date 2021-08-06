@@ -4,7 +4,7 @@ use async_std::io::{Read, Seek};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use sqlx::{Sqlite, Transaction};
+use sqlx::{sqlite::SqliteRow, FromRow, Row, Sqlite, Transaction};
 use std::fmt;
 use thiserror::Error;
 
@@ -31,6 +31,13 @@ impl From<i64> for ResourceId {
 impl From<ResourceId> for i64 {
     fn from(val: ResourceId) -> i64 {
         val.0
+    }
+}
+
+// Extracts a ResourceId from the first column of a row.
+impl<'r> FromRow<'r, SqliteRow> for ResourceId {
+    fn from_row(row: &'r SqliteRow) -> Result<Self, sqlx::Error> {
+        Ok(row.get::<i64, usize>(0).into())
     }
 }
 

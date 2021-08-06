@@ -1,15 +1,21 @@
 /// Scorer based on the frecency algorithm
 /// See https://developer.mozilla.org/en-US/docs/Mozilla/Tech/Places/Frecency_algorithm
 use chrono::{DateTime, Utc};
+use libsqlite3_sys::{sqlite3_context, sqlite3_result_int, sqlite3_value, sqlite3_value_text};
 use serde::{Deserialize, Serialize};
+use std::ffi::CStr;
+use std::os::raw::c_int;
 
 static MAX_VISIT_ENTRIES: usize = 10;
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 
 pub enum VisitPriority {
+    #[serde(rename = "N")]
     Normal,
+    #[serde(rename = "H")]
     High,
+    #[serde(rename = "V")]
     VeryHigh,
 }
 
@@ -26,21 +32,23 @@ impl VisitPriority {
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct VisitEntry {
-    timestamp: DateTime<Utc>,
+    #[serde(rename = "t")]
+    timestamp: i64, // Time since EPOCH in nano seconds.
+    #[serde(rename = "p")]
     priority: VisitPriority,
 }
 
 impl VisitEntry {
     pub fn new(when: &DateTime<Utc>, priority: VisitPriority) -> Self {
         Self {
-            timestamp: *when,
+            timestamp: (*when).naive_utc().timestamp_nanos(),
             priority,
         }
     }
 
     pub fn now(priority: VisitPriority) -> Self {
         Self {
-            timestamp: Utc::now(),
+            timestamp: Utc::now().naive_utc().timestamp_nanos(),
             priority,
         }
     }
@@ -48,12 +56,16 @@ impl VisitEntry {
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct Scorer {
-    visit_count: u32,
+    #[serde(rename = "c")]
+    all_time_visits: u32, // The total number of visits, which can be greater than the entries we keep.
+    #[serde(rename = "e")]
     entries: Vec<VisitEntry>,
 }
 
-fn weight_for(when: &DateTime<Utc>) -> u32 {
-    let days = (Utc::now() - *when).num_days();
+fn weight_for(when: i64) -> u32 {
+    use chrono::TimeZone;
+
+    let days = (Utc::now() - Utc.timestamp_nanos(when)).num_days();
     if days <= 4 {
         100
     } else if days <= 14 {
@@ -70,7 +82,7 @@ fn weight_for(when: &DateTime<Utc>) -> u32 {
 impl Default for Scorer {
     fn default() -> Self {
         Self {
-            visit_count: 0,
+            all_time_visits: 0,
             entries: Vec::with_capacity(MAX_VISIT_ENTRIES),
         }
     }
@@ -84,7 +96,7 @@ impl Scorer {
         }
 
         self.entries.push(entry.clone());
-        self.visit_count += 1;
+        self.all_time_visits += 1;
     }
 
     pub fn frecency(&self) -> u32 {
@@ -97,10 +109,10 @@ impl Scorer {
 
         let sum = (&self.entries)
             .iter()
-            .map(|item| (item.priority.bonus() * weight_for(&item.timestamp)) as f32 / 100.0)
+            .map(|item| (item.priority.bonus() * weight_for(item.timestamp)) as f32 / 100.0)
             .sum::<f32>();
 
-        self.visit_count * sum.round() as u32 / self.entries.len() as u32
+        self.all_time_visits * sum.round() as u32 / self.entries.len() as u32
     }
 
     #[cfg(test)]
@@ -117,6 +129,30 @@ impl Scorer {
 impl PartialEq for Scorer {
     fn eq(&self, other: &Scorer) -> bool {
         self.frecency() == other.frecency()
+    }
+}
+
+// SQlite function to return an up to date value of the frecency.
+pub extern "C" fn sqlite_frecency(
+    ctx: *mut sqlite3_context,
+    argc: c_int,
+    argv: *mut *mut sqlite3_value,
+) {
+    unsafe {
+        // 0. Check argument count.
+        if argc != 1 {
+            sqlite3_result_int(ctx, 0);
+            return;
+        }
+
+        // 1. Get the json string from the first argument.
+        let args = std::slice::from_raw_parts(argv, argc as _);
+        let json = CStr::from_ptr(sqlite3_value_text(args[0]) as _).to_string_lossy();
+        // log::error!("JSON is {}", json);
+
+        // 2. Get a Scorer object and return the frecency.
+        let scorer: Scorer = serde_json::from_str(&json).unwrap_or_default();
+        sqlite3_result_int(ctx, scorer.frecency() as _);
     }
 }
 

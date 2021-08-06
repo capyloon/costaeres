@@ -60,41 +60,40 @@ impl Fts {
                 word = word[0..self.max_substring_len].to_owned();
             }
 
+            #[derive(sqlx::FromRow)]
             struct IdFrec {
-                id: i64,
-                frecency: i64,
+                id: ResourceId,
+                frecency: u32,
             }
 
-            let records = match tag {
+            let records: Vec<IdFrec> = match tag {
                 None => {
-                    sqlx::query_as!(
-                        IdFrec,
-                        r#"SELECT resources.id, resources.frecency FROM resources
+                    sqlx::query_as(
+                        r#"SELECT resources.id, frecency(resources.scorer) AS frecency FROM resources
                         LEFT JOIN fts
                         WHERE fts.ngram = ? and fts.id = resources.id"#,
-                        word
                     )
+                    .bind(word)
                     .fetch_all(&mut tx)
                     .await?
                 }
                 Some(ref tag) => {
-                    sqlx::query_as!(
-                        IdFrec,
-                        r#"SELECT resources.id, resources.frecency FROM resources
+                    sqlx::query_as(
+                        r#"SELECT resources.id, frecency(resources.scorer) AS frecency FROM resources
                         LEFT JOIN fts, tags
                         WHERE tags.tag = ? AND fts.ngram = ?
                         AND fts.id = resources.id AND tags.id = resources.id"#,
-                        tag,
-                        word
                     )
+                    .bind(tag)
+                    .bind(word)
                     .fetch_all(&mut tx)
                     .await?
                 }
             };
             records.iter().for_each(|r| {
-                res.entry(r.id.into())
+                res.entry(r.id)
                     .and_modify(|e| (*e).0 += 1)
-                    .or_insert((1, r.frecency as _));
+                    .or_insert((1, r.frecency));
             });
         }
 

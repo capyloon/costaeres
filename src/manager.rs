@@ -22,13 +22,21 @@ use crate::common::{
 use crate::config::Config;
 use crate::fts::Fts;
 use crate::indexer::Indexer;
+use crate::scorer::sqlite_frecency;
 use crate::scorer::VisitEntry;
-use async_std::fs::File;
 use bincode::Options;
 use chrono::{DateTime, Utc};
+use libsqlite3_sys::{
+    sqlite3_create_function, SQLITE_DETERMINISTIC, SQLITE_DIRECTONLY, SQLITE_INNOCUOUS, SQLITE_UTF8,
+};
 use log::{debug, error};
-use sqlx::{Sqlite, SqlitePool, Transaction};
+use sqlx::{
+    sqlite::{SqliteConnectOptions, SqlitePoolOptions},
+    Row, Sqlite, SqlitePool, Transaction,
+};
 use std::collections::HashSet;
+use std::ffi::CString;
+use std::str::FromStr;
 
 pub struct Manager {
     db_pool: SqlitePool,
@@ -42,12 +50,32 @@ impl Manager {
         config: Config,
         store: Box<dyn ResourceStore + Send + Sync>,
     ) -> Result<Self, ResourceStoreError> {
-        // Create db file if needed.
-        if File::open(&config.db_path).await.is_err() {
-            let _file = File::create(&config.db_path).await?;
-        }
+        let options = SqliteConnectOptions::from_str(&format!("sqlite://{}", config.db_path))?
+            .create_if_missing(true);
 
-        let db_pool = SqlitePool::connect(&format!("sqlite://{}", config.db_path)).await?;
+        // Register our custom function to evaluate frecency based on the scorer serialized representation.
+        let pool_options = SqlitePoolOptions::new().after_connect(|conn| {
+            Box::pin(async move {
+                let handle = conn.as_raw_handle();
+
+                let name = CString::new("frecency").unwrap();
+                unsafe {
+                    sqlite3_create_function(
+                        handle,
+                        name.as_ptr(),
+                        1, // Argument count.
+                        SQLITE_UTF8 | SQLITE_DETERMINISTIC | SQLITE_INNOCUOUS | SQLITE_DIRECTONLY,
+                        std::ptr::null_mut(),
+                        Some(sqlite_frecency),
+                        None,
+                        None,
+                    );
+                }
+                Ok(())
+            })
+        });
+
+        let db_pool = pool_options.connect_with(options).await?;
         sqlx::migrate!("db/migrations")
             .run(&db_pool)
             .await
@@ -74,12 +102,10 @@ impl Manager {
 
         let id = metadata.id();
         let scorer = metadata.db_scorer();
-        let frecency = metadata.scorer().frecency();
-        // We only need to update the scorer and frecency, so not doing a full update here.
+        // We only need to update the scorer, so not doing a full update here.
         sqlx::query!(
-            "UPDATE OR REPLACE resources SET scorer = ?, frecency = ? WHERE id = ?",
+            "UPDATE OR REPLACE resources SET scorer = ? WHERE id = ?",
             scorer,
-            frecency,
             id
         )
         .execute(&self.db_pool)
@@ -101,11 +127,10 @@ impl Manager {
         let created = metadata.created();
         let modified = metadata.modified();
         let scorer = metadata.db_scorer();
-        let frecency = metadata.scorer().frecency();
         sqlx::query!(
             r#"
-    INSERT INTO resources ( id, parent, kind, name,   created, modified, scorer, frecency )
-    VALUES ( ?, ?, ?, ?, ?, ?, ?, ? )
+    INSERT INTO resources ( id, parent, kind, name, created, modified, scorer )
+    VALUES ( ?, ?, ?, ?, ?, ?, ? )
             "#,
             id,
             parent,
@@ -114,7 +139,6 @@ impl Manager {
             created,
             modified,
             scorer,
-            frecency,
         )
         .execute(&mut tx)
         .await?;
@@ -326,27 +350,17 @@ impl Manager {
         }
 
         let results: Vec<ResourceId> = if let Some(tag) = tag {
-            sqlx::query!(
+            sqlx::query_as(
                 "SELECT resources.id FROM resources LEFT JOIN tags
-                WHERE tags.tag = ? AND name = ? AND tags.id = resources.id ORDER BY frecency DESC",
-                name,
-                tag
-            )
+                WHERE tags.tag = ? AND name = ? AND tags.id = resources.id ORDER BY frecency(resources.scorer) DESC",
+            ).bind(name).bind(tag)
             .fetch_all(&self.db_pool)
             .await?
-            .iter()
-            .map(|r| r.id.into())
-            .collect()
         } else {
-            sqlx::query!(
-                "SELECT id FROM resources WHERE name = ? ORDER BY frecency DESC",
-                name,
-            )
-            .fetch_all(&self.db_pool)
-            .await?
-            .iter()
-            .map(|r| r.id.into())
-            .collect()
+            sqlx::query_as("SELECT id FROM resources WHERE name = ? ORDER BY frecency(scorer) DESC")
+                .bind(name)
+                .fetch_all(&self.db_pool)
+                .await?
         };
 
         Ok(results)
@@ -383,18 +397,15 @@ impl Manager {
             return Err(ResourceStoreError::Custom("EmptyTagQuery".into()));
         }
 
-        let results: Vec<ResourceId> = sqlx::query!(
+        let results: Vec<ResourceId> = sqlx::query_as(
             r#"SELECT resources.id FROM resources
             LEFT JOIN tags
             WHERE tags.tag = ? and tags.id = resources.id
-            ORDER BY frecency DESC"#,
-            tag
+            ORDER BY frecency(resources.scorer) DESC"#,
         )
+        .bind(tag)
         .fetch_all(&self.db_pool)
-        .await?
-        .iter()
-        .map(|r| r.id.into())
-        .collect();
+        .await?;
 
         Ok(results)
     }
@@ -419,15 +430,16 @@ impl Manager {
             return Err(ResourceStoreError::Custom("ZeroCountQuery".into()));
         }
 
-        let results: Vec<(ResourceId, u32)> = sqlx::query!(
-            "SELECT id, frecency FROM resources ORDER BY frecency DESC LIMIT ?",
-            count,
-        )
-        .fetch_all(&self.db_pool)
-        .await?
-        .iter()
-        .map(|r| (r.id.into(), r.frecency as u32))
-        .collect();
+        let query = sqlx::query(
+            "SELECT id, frecency(resources.scorer) AS frecency FROM resources ORDER BY frecency DESC LIMIT ?",
+        ).bind(count);
+
+        let results: Vec<(ResourceId, u32)> = query
+            .fetch_all(&self.db_pool)
+            .await?
+            .iter()
+            .map(|r| (r.get::<i64, usize>(0).into(), r.get::<u32, usize>(1)))
+            .collect();
 
         Ok(results)
     }

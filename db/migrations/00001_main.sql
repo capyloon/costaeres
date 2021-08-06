@@ -8,7 +8,6 @@ CREATE TABLE IF NOT EXISTS resources
     created  DATETIME NOT NULL,
     modified DATETIME NOT NULL,
     scorer   TEXT     NOT NULL,
-    frecency INTEGER  NOT NULL DEFAULT 0,
 -- Enforce unique names under a container.
     UNIQUE(parent , name)
 );
