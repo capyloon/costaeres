@@ -178,10 +178,9 @@ impl ResourceMetadata {
         self.name.clone()
     }
 
-    // Returns a JSON representation of the score, to store in the DB.
-    // TODO: consider switching to bincode?
-    pub fn db_scorer(&self) -> String {
-        serde_json::to_string(&self.scorer).unwrap_or_else(|_| "{}".into())
+    // Returns a bincode representation of the score, to store in the DB.
+    pub fn db_scorer(&self) -> Vec<u8> {
+        self.scorer.as_bincode()
     }
 
     pub fn scorer(&self) -> &Scorer {
@@ -192,9 +191,9 @@ impl ResourceMetadata {
         self.scorer.add(entry);
     }
 
-    // Set the scorer using the json serialized representation.
-    pub fn set_scorer_from_db(&mut self, scorer: &str) {
-        self.scorer = serde_json::from_str(scorer).unwrap_or_default();
+    // Set the scorer using the db serialized representation.
+    pub fn set_scorer_from_db(&mut self, serialized: &[u8]) {
+        self.scorer = Scorer::from_bincode(serialized)
     }
 
     pub fn created(&self) -> DateTime<Utc> {

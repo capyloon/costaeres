@@ -720,7 +720,10 @@ async fn frecency_update() {
     let mut meta = manager.get_metadata(ROOT_ID).await.unwrap();
     assert_eq!(meta.scorer().frecency(), 0);
 
-    manager.visit(&mut meta, &VisitEntry::now(VisitPriority::Normal)).await.unwrap();
+    manager
+        .visit(&mut meta, &VisitEntry::now(VisitPriority::Normal))
+        .await
+        .unwrap();
     let meta = manager.get_metadata(ROOT_ID).await.unwrap();
     assert_eq!(meta.scorer().frecency(), 100);
 }

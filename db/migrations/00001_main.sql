@@ -7,7 +7,7 @@ CREATE TABLE IF NOT EXISTS resources
     name     TEXT     KEY NOT NULL,
     created  DATETIME NOT NULL,
     modified DATETIME NOT NULL,
-    scorer   TEXT     NOT NULL,
+    scorer   BLOB     NOT NULL, -- bincode encoded representation of the scorer.
 -- Enforce unique names under a container.
     UNIQUE(parent , name)
 );

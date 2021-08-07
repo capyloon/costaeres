@@ -1,15 +1,15 @@
 /// Scorer based on the frecency algorithm
 /// See https://developer.mozilla.org/en-US/docs/Mozilla/Tech/Places/Frecency_algorithm
 use chrono::{DateTime, Utc};
-use libsqlite3_sys::{sqlite3_context, sqlite3_result_int, sqlite3_value, sqlite3_value_text};
+use libsqlite3_sys::{
+    sqlite3_context, sqlite3_result_int, sqlite3_value, sqlite3_value_blob, sqlite3_value_bytes,
+};
 use serde::{Deserialize, Serialize};
-use std::ffi::CStr;
 use std::os::raw::c_int;
 
 static MAX_VISIT_ENTRIES: usize = 10;
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
-
 pub enum VisitPriority {
     #[serde(rename = "N")]
     Normal,
@@ -33,9 +33,9 @@ impl VisitPriority {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct VisitEntry {
     #[serde(rename = "t")]
-    timestamp: i64, // Time since EPOCH in nano seconds.
+    pub timestamp: i64, // Time since EPOCH in nano seconds.
     #[serde(rename = "p")]
-    priority: VisitPriority,
+    pub priority: VisitPriority,
 }
 
 impl VisitEntry {
@@ -124,6 +124,21 @@ impl Scorer {
         }
         score.frecency()
     }
+
+    pub fn as_bincode(&self) -> Vec<u8> {
+        use bincode::Options;
+
+        let bincode = bincode::options().with_big_endian().with_varint_encoding();
+        let res = bincode.serialize(&self).unwrap();
+        res
+    }
+
+    pub fn from_bincode(input: &[u8]) -> Self {
+        use bincode::Options;
+
+        let bincode = bincode::options().with_big_endian().with_varint_encoding();
+        bincode.deserialize(&input).expect("F")
+    }
 }
 
 impl PartialEq for Scorer {
@@ -145,47 +160,62 @@ pub extern "C" fn sqlite_frecency(
             return;
         }
 
-        // 1. Get the json string from the first argument.
+        // 1. Get the blob from the first argument.
         let args = std::slice::from_raw_parts(argv, argc as _);
-        let json = CStr::from_ptr(sqlite3_value_text(args[0]) as _).to_string_lossy();
-        // log::error!("JSON is {}", json);
+        let blob_arg = args[0];
+
+        let len = sqlite3_value_bytes(blob_arg) as usize;
+
+        if len == 0 {
+            // empty blobs are NULL so just return 0.
+            sqlite3_result_int(ctx, 0);
+            return;
+        }
+        let ptr = sqlite3_value_blob(blob_arg) as *const u8;
+        debug_assert!(!ptr.is_null());
+        let array = std::slice::from_raw_parts(ptr, len);
 
         // 2. Get a Scorer object and return the frecency.
-        let scorer: Scorer = serde_json::from_str(&json).unwrap_or_default();
+        let scorer = Scorer::from_bincode(array);
         sqlite3_result_int(ctx, scorer.frecency() as _);
     }
 }
 
-#[test]
-fn frecency_alg() {
-    use chrono::Duration;
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-    assert_eq!(Scorer::max(), 2000);
+    #[test]
+    fn frecency_alg() {
+        use chrono::Duration;
 
-    // Add 2 visits of normal priority with a 10 day interval.
-    let mut score = Scorer::default();
-    assert_eq!(score.frecency(), 0);
+        assert_eq!(Scorer::max(), 2000);
 
-    let now = Utc::now();
-    score.add(&VisitEntry::new(&now, VisitPriority::Normal));
-    assert_eq!(score.frecency(), 100);
+        // Add 2 visits of normal priority with a 10 day interval.
+        let mut score = Scorer::default();
+        assert_eq!(score.frecency(), 0);
 
-    score.add(&VisitEntry::new(
-        &(now - Duration::days(10)),
-        VisitPriority::Normal,
-    ));
-    assert_eq!(score.frecency(), 170);
+        let now = Utc::now();
+        score.add(&VisitEntry::new(&now, VisitPriority::Normal));
+        assert_eq!(score.frecency(), 100);
 
-    // Add 2 visits with a 10 day interval, one with high priority.
-    let mut score = Scorer::default();
+        score.add(&VisitEntry::new(
+            &(now - Duration::days(10)),
+            VisitPriority::Normal,
+        ));
+        assert_eq!(score.frecency(), 170);
 
-    let now = Utc::now();
-    score.add(&VisitEntry::new(&now, VisitPriority::Normal));
-    assert_eq!(score.frecency(), 100);
+        // Add 2 visits with a 10 day interval, one with high priority.
+        let mut score = Scorer::default();
 
-    score.add(&VisitEntry::new(
-        &(now - Duration::days(10)),
-        VisitPriority::High,
-    ));
-    assert_eq!(score.frecency(), 205);
+        let now = Utc::now();
+        score.add(&VisitEntry::new(&now, VisitPriority::Normal));
+        assert_eq!(score.frecency(), 100);
+
+        score.add(&VisitEntry::new(
+            &(now - Duration::days(10)),
+            VisitPriority::High,
+        ));
+        assert_eq!(score.frecency(), 205);
+    }
 }
