@@ -427,8 +427,7 @@ async fn top_frecency() {
 
     let results = manager.top_by_frecency(10).await.unwrap();
     assert_eq!(results.len(), 10);
-    let first = results[0];
-    assert_eq!(first, (ROOT_ID, 100));
+    assert_eq!(results[0], IdFrec::new(ROOT_ID, 100));
 }
 
 #[async_std::test]

@@ -41,6 +41,18 @@ impl<'r> FromRow<'r, SqliteRow> for ResourceId {
     }
 }
 
+#[derive(sqlx::FromRow, PartialEq, Debug)]
+pub struct IdFrec {
+    pub id: ResourceId,
+    pub frecency: u32,
+}
+
+impl IdFrec {
+    pub fn new(id: ResourceId, frecency: u32) -> Self {
+        Self { id, frecency }
+    }
+}
+
 #[derive(sqlx::Type, Clone, Copy, Debug, Deserialize, Serialize, PartialEq)]
 #[repr(u8)]
 pub enum ResourceKind {

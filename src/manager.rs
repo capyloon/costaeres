@@ -16,8 +16,8 @@
 /// Any failure of the remote side leads to a rollback of the database transaction
 /// to preserve the consistency between both sides.
 use crate::common::{
-    BoxedReader, ResourceId, ResourceKind, ResourceMetadata, ResourceStore, ResourceStoreError,
-    TransactionResult, Variant, VariantContent, ROOT_ID,
+    BoxedReader, IdFrec, ResourceId, ResourceKind, ResourceMetadata, ResourceStore,
+    ResourceStoreError, TransactionResult, Variant, VariantContent, ROOT_ID,
 };
 use crate::config::Config;
 use crate::fts::Fts;
@@ -32,7 +32,7 @@ use libsqlite3_sys::{
 use log::{debug, error};
 use sqlx::{
     sqlite::{SqliteConnectOptions, SqlitePoolOptions},
-    Row, Sqlite, SqlitePool, Transaction,
+    Sqlite, SqlitePool, Transaction,
 };
 use std::collections::HashSet;
 use std::ffi::CString;
@@ -414,7 +414,7 @@ impl Manager {
         &self,
         text: &str,
         tag: Option<String>,
-    ) -> Result<Vec<(ResourceId, u32)>, ResourceStoreError> {
+    ) -> Result<Vec<IdFrec>, ResourceStoreError> {
         if text.trim().is_empty() {
             return Err(ResourceStoreError::Custom("EmptyTextQuery".into()));
         }
@@ -422,24 +422,15 @@ impl Manager {
         self.fts.search(text, tag).await
     }
 
-    pub async fn top_by_frecency(
-        &self,
-        count: u32,
-    ) -> Result<Vec<(ResourceId, u32)>, ResourceStoreError> {
+    pub async fn top_by_frecency(&self, count: u32) -> Result<Vec<IdFrec>, ResourceStoreError> {
         if count == 0 {
             return Err(ResourceStoreError::Custom("ZeroCountQuery".into()));
         }
 
-        let query = sqlx::query(
+        let results: Vec<IdFrec> = sqlx::query_as(
             "SELECT id, frecency(resources.scorer) AS frecency FROM resources ORDER BY frecency DESC LIMIT ?",
-        ).bind(count);
-
-        let results: Vec<(ResourceId, u32)> = query
-            .fetch_all(&self.db_pool)
-            .await?
-            .iter()
-            .map(|r| (r.get::<i64, usize>(0).into(), r.get::<u32, usize>(1)))
-            .collect();
+        ).bind(count).fetch_all(&self.db_pool)
+            .await?;
 
         Ok(results)
     }

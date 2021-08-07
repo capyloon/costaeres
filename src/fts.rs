@@ -4,7 +4,7 @@
 /// Using a simple SQlite table (ResourceId, ngram) which makes it easy to
 /// manage object removal at the expense of disk space usage and query performance.
 /// TODO: switch to a Key Value store (eg. Sled) instead, or a fts engine like Sonic.
-use crate::common::{ResourceId, ResourceStoreError, TransactionResult};
+use crate::common::{IdFrec, ResourceId, ResourceStoreError, TransactionResult};
 use sqlx::{Sqlite, SqlitePool, Transaction};
 use std::collections::{HashMap, HashSet};
 
@@ -47,7 +47,7 @@ impl Fts {
         &self,
         text: &str,
         tag: Option<String>,
-    ) -> Result<Vec<(ResourceId, u32)>, ResourceStoreError> {
+    ) -> Result<Vec<IdFrec>, ResourceStoreError> {
         let mut tx = self.db_pool.begin().await?;
         // Map ResourceId -> (ngram matches, frecency)
         let mut res: HashMap<ResourceId, (usize, u32)> = HashMap::new();
@@ -60,35 +60,25 @@ impl Fts {
                 word = word[0..self.max_substring_len].to_owned();
             }
 
-            #[derive(sqlx::FromRow)]
-            struct IdFrec {
-                id: ResourceId,
-                frecency: u32,
-            }
-
             let records: Vec<IdFrec> = match tag {
-                None => {
-                    sqlx::query_as(
-                        r#"SELECT resources.id, frecency(resources.scorer) AS frecency FROM resources
+                None => sqlx::query_as(
+                    r#"SELECT resources.id, frecency(resources.scorer) AS frecency FROM resources
                         LEFT JOIN fts
                         WHERE fts.ngram = ? and fts.id = resources.id"#,
-                    )
-                    .bind(word)
-                    .fetch_all(&mut tx)
-                    .await?
-                }
-                Some(ref tag) => {
-                    sqlx::query_as(
-                        r#"SELECT resources.id, frecency(resources.scorer) AS frecency FROM resources
+                )
+                .bind(word)
+                .fetch_all(&mut tx)
+                .await?,
+                Some(ref tag) => sqlx::query_as(
+                    r#"SELECT resources.id, frecency(resources.scorer) AS frecency FROM resources
                         LEFT JOIN fts, tags
                         WHERE tags.tag = ? AND fts.ngram = ?
                         AND fts.id = resources.id AND tags.id = resources.id"#,
-                    )
-                    .bind(tag)
-                    .bind(word)
-                    .fetch_all(&mut tx)
-                    .await?
-                }
+                )
+                .bind(tag)
+                .bind(word)
+                .fetch_all(&mut tx)
+                .await?,
             };
             records.iter().for_each(|r| {
                 res.entry(r.id)
@@ -97,17 +87,17 @@ impl Fts {
             });
         }
 
-        let mut matches: Vec<(ResourceId, u32)> = res
+        let mut matches: Vec<IdFrec> = res
             .iter()
             .filter_map(|item| {
                 if item.1 .0 == len {
-                    Some((*item.0, item.1 .1))
+                    Some(IdFrec::new(*item.0, item.1 .1))
                 } else {
                     None
                 }
             })
             .collect();
-        matches.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
+        matches.sort_by(|a, b| b.frecency.partial_cmp(&a.frecency).unwrap());
         Ok(matches)
     }
 }
