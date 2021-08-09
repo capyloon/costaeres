@@ -129,15 +129,16 @@ impl Scorer {
         use bincode::Options;
 
         let bincode = bincode::options().with_big_endian().with_varint_encoding();
-        let res = bincode.serialize(&self).unwrap();
-        res
+        bincode.serialize(&self).unwrap()
     }
 
     pub fn from_bincode(input: &[u8]) -> Self {
         use bincode::Options;
 
         let bincode = bincode::options().with_big_endian().with_varint_encoding();
-        bincode.deserialize(&input).expect("F")
+        bincode
+            .deserialize(input)
+            .expect("Failed to deserialize scorer")
     }
 }
 
@@ -147,38 +148,38 @@ impl PartialEq for Scorer {
     }
 }
 
-// SQlite function to return an up to date value of the frecency.
-pub extern "C" fn sqlite_frecency(
+/// # Safety
+///
+/// SQlite function to return an up to date value of the frecency.
+pub unsafe extern "C" fn sqlite_frecency(
     ctx: *mut sqlite3_context,
     argc: c_int,
     argv: *mut *mut sqlite3_value,
 ) {
-    unsafe {
-        // 0. Check argument count.
-        if argc != 1 {
-            sqlite3_result_int(ctx, 0);
-            return;
-        }
-
-        // 1. Get the blob from the first argument.
-        let args = std::slice::from_raw_parts(argv, argc as _);
-        let blob_arg = args[0];
-
-        let len = sqlite3_value_bytes(blob_arg) as usize;
-
-        if len == 0 {
-            // empty blobs are NULL so just return 0.
-            sqlite3_result_int(ctx, 0);
-            return;
-        }
-        let ptr = sqlite3_value_blob(blob_arg) as *const u8;
-        debug_assert!(!ptr.is_null());
-        let array = std::slice::from_raw_parts(ptr, len);
-
-        // 2. Get a Scorer object and return the frecency.
-        let scorer = Scorer::from_bincode(array);
-        sqlite3_result_int(ctx, scorer.frecency() as _);
+    // 0. Check argument count.
+    if argc != 1 {
+        sqlite3_result_int(ctx, 0);
+        return;
     }
+
+    // 1. Get the blob from the first argument.
+    let args = std::slice::from_raw_parts(argv, argc as _);
+    let blob_arg = args[0];
+
+    let len = sqlite3_value_bytes(blob_arg) as usize;
+
+    if len == 0 {
+        // empty blobs are NULL so just return 0.
+        sqlite3_result_int(ctx, 0);
+        return;
+    }
+    let ptr = sqlite3_value_blob(blob_arg) as *const u8;
+    debug_assert!(!ptr.is_null());
+    let array = std::slice::from_raw_parts(ptr, len);
+
+    // 2. Get a Scorer object and return the frecency.
+    let scorer = Scorer::from_bincode(array);
+    sqlite3_result_int(ctx, scorer.frecency() as _);
 }
 
 #[cfg(test)]

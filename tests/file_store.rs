@@ -27,13 +27,13 @@ async fn file_store() {
     let store = FileStore::new("./test-content/0").await.unwrap();
 
     // Starting with no content.
-    let res = store.get_full(ROOT_ID, "default").await.err();
+    let res = store.get_full(&ROOT_ID, "default").await.err();
     assert_eq!(res, Some(ResourceStoreError::NoSuchResource));
 
     // Adding an object.
     let meta = ResourceMetadata::new(
-        ROOT_ID,
-        ROOT_ID,
+        &ROOT_ID,
+        &ROOT_ID,
         ResourceKind::Leaf,
         "object 0",
         vec!["one".into(), "two".into()],
@@ -47,8 +47,8 @@ async fn file_store() {
     assert_eq!(res, Some(()));
 
     // Now check that we can get it.
-    let res = store.get_full(ROOT_ID, "default").await.ok().unwrap().0;
-    assert_eq!(res.id(), ROOT_ID);
+    let res = store.get_full(&ROOT_ID, "default").await.ok().unwrap().0;
+    assert!(res.id().is_root());
     assert_eq!(&res.name(), "object 0");
 
     // Check we can't add another object with the same id.
@@ -60,8 +60,8 @@ async fn file_store() {
 
     // Update the object.
     let mut meta = ResourceMetadata::new(
-        ROOT_ID,
-        ROOT_ID,
+        &ROOT_ID,
+        &ROOT_ID,
         ResourceKind::Leaf,
         "object 0 updated",
         vec!["one".into(), "two".into()],
@@ -73,15 +73,15 @@ async fn file_store() {
         .await
         .unwrap();
 
-    let res = store.get_full(ROOT_ID, "default").await.ok().unwrap().0;
-    assert_eq!(res.id(), ROOT_ID);
+    let res = store.get_full(&ROOT_ID, "default").await.ok().unwrap().0;
+    assert!(res.id().is_root());
     assert_eq!(&res.name(), "object 0 updated");
 
     // Get the default variant.
-    store.get_variant(ROOT_ID, "default").await.unwrap();
+    store.get_variant(&ROOT_ID, "default").await.unwrap();
 
     // Check that we don't have another variant.
-    assert!(store.get_variant(ROOT_ID, "not-default").await.is_err());
+    assert!(store.get_variant(&ROOT_ID, "not-default").await.is_err());
 
     // Add a variant.
     meta.add_variant(named_variant("new-variant"));
@@ -90,7 +90,7 @@ async fn file_store() {
         .await
         .unwrap();
     // Get the new variant.
-    store.get_variant(ROOT_ID, "new-variant").await.unwrap();
+    store.get_variant(&ROOT_ID, "new-variant").await.unwrap();
 
     // Update with an invalid variant.
     let res = store
@@ -102,9 +102,9 @@ async fn file_store() {
     );
 
     // Now delete this object.
-    let _ = store.delete(ROOT_ID).await.ok().unwrap();
+    let _ = store.delete(&ROOT_ID).await.ok().unwrap();
 
     // And check we can't get it anymore.
-    let res = store.get_full(ROOT_ID, "default").await.err();
+    let res = store.get_full(&ROOT_ID, "default").await.err();
     assert_eq!(res, Some(ResourceStoreError::NoSuchResource));
 }

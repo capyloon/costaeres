@@ -41,13 +41,13 @@ impl FileStore {
         Ok(Self { root })
     }
 
-    fn meta_path(&self, id: ResourceId) -> PathBuf {
+    fn meta_path(&self, id: &ResourceId) -> PathBuf {
         let mut meta_path = self.root.clone();
         meta_path.push(&format!("{}.meta", id));
         meta_path
     }
 
-    fn variant_path(&self, id: ResourceId, variant: &str) -> PathBuf {
+    fn variant_path(&self, id: &ResourceId, variant: &str) -> PathBuf {
         let mut content_path = self.root.clone();
         content_path.push(&format!("{}.content.{}", id, variant));
         content_path
@@ -62,7 +62,7 @@ impl FileStore {
         // 0. TODO: check if we have enough storage available.
 
         let id = metadata.id();
-        let meta_path = self.meta_path(id);
+        let meta_path = self.meta_path(&id);
 
         // 1. When creating, check if we already have files for this id, and bail out if so.
         if create {
@@ -90,7 +90,7 @@ impl FileStore {
                 error!("Variant '{}' is not in metadata.", name);
                 return Err(ResourceStoreError::InvalidVariant(name));
             }
-            let mut file = File::create(&self.variant_path(id, &name)).await?;
+            let mut file = File::create(&self.variant_path(&id, &name)).await?;
             file.set_len(content.0.size() as _).await?;
             futures::io::copy(content.1, &mut file).await?;
             file.sync_all().await?;
@@ -120,7 +120,7 @@ impl ResourceStore for FileStore {
 
     async fn update_default_variant_from_slice(
         &self,
-        id: ResourceId,
+        id: &ResourceId,
         content: &[u8],
     ) -> Result<(), ResourceStoreError> {
         let content_path = self.variant_path(id, "default");
@@ -131,7 +131,7 @@ impl ResourceStore for FileStore {
         Ok(())
     }
 
-    async fn delete(&self, id: ResourceId) -> Result<(), ResourceStoreError> {
+    async fn delete(&self, id: &ResourceId) -> Result<(), ResourceStoreError> {
         // 1. get the metadata in order to know all the possible variants.
         let metadata = self.get_metadata(id).await?;
 
@@ -151,7 +151,7 @@ impl ResourceStore for FileStore {
 
     async fn delete_variant(
         &self,
-        id: ResourceId,
+        id: &ResourceId,
         variant: &str,
     ) -> Result<(), ResourceStoreError> {
         let path = self.variant_path(id, variant);
@@ -161,7 +161,7 @@ impl ResourceStore for FileStore {
         Ok(())
     }
 
-    async fn get_metadata(&self, id: ResourceId) -> Result<ResourceMetadata, ResourceStoreError> {
+    async fn get_metadata(&self, id: &ResourceId) -> Result<ResourceMetadata, ResourceStoreError> {
         use async_std::io::ReadExt;
 
         let meta_path = self.meta_path(id);
@@ -178,7 +178,7 @@ impl ResourceStore for FileStore {
 
     async fn get_full(
         &self,
-        id: ResourceId,
+        id: &ResourceId,
         name: &str,
     ) -> Result<(ResourceMetadata, BoxedReader), ResourceStoreError> {
         use async_std::io::ReadExt;
@@ -202,7 +202,7 @@ impl ResourceStore for FileStore {
 
     async fn get_variant(
         &self,
-        id: ResourceId,
+        id: &ResourceId,
         name: &str,
     ) -> Result<BoxedReader, ResourceStoreError> {
         let content_path = self.variant_path(id, name);

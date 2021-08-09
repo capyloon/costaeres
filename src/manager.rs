@@ -173,7 +173,7 @@ impl Manager {
     }
 
     /// Returns `true` if this object id is in the local index.
-    pub async fn has_object(&self, id: ResourceId) -> Result<bool, ResourceStoreError> {
+    pub async fn has_object(&self, id: &ResourceId) -> Result<bool, ResourceStoreError> {
         let count = sqlx::query_scalar!("SELECT count(*) FROM resources WHERE id = ?", id)
             .fetch_one(&self.db_pool)
             .await?;
@@ -191,7 +191,7 @@ impl Manager {
     }
 
     /// Returns `true` if this object id is in the local index and is a container.
-    pub async fn is_container(&self, id: ResourceId) -> Result<bool, ResourceStoreError> {
+    pub async fn is_container(&self, id: &ResourceId) -> Result<bool, ResourceStoreError> {
         let count = sqlx::query_scalar!(
             "SELECT count(*) FROM resources WHERE id = ? and kind = ?",
             id,
@@ -207,15 +207,15 @@ impl Manager {
     // container == leaf is only valid for the root (container == 0)
     pub async fn check_container_leaf(
         &self,
-        id: ResourceId,
-        parent: ResourceId,
+        id: &ResourceId,
+        parent: &ResourceId,
     ) -> Result<(), ResourceStoreError> {
-        if parent == id && parent != ROOT_ID {
+        if parent == id && !parent.is_root() {
             error!("Only the root can be its own container.");
             return Err(ResourceStoreError::InvalidContainerId);
         }
         // Check that the parent is a known container, except when we create the root.
-        if id != ROOT_ID && !self.is_container(parent).await? {
+        if !id.is_root() && !self.is_container(parent).await? {
             error!("Resource #{} is not a container", parent);
             return Err(ResourceStoreError::InvalidContainerId);
         }
@@ -225,7 +225,7 @@ impl Manager {
 
     pub async fn children_of<'c, E: sqlx::Executor<'c, Database = Sqlite>>(
         &self,
-        parent: ResourceId,
+        parent: &ResourceId,
         executor: E,
     ) -> Result<Vec<ResourceId>, ResourceStoreError> {
         let children: Vec<ResourceId> = sqlx::query!(
@@ -235,7 +235,7 @@ impl Manager {
         .fetch_all(executor)
         .await?
         .iter()
-        .map(|r| r.id.into())
+        .map(|r| r.id.clone().into())
         .collect();
 
         Ok(children)
@@ -243,7 +243,7 @@ impl Manager {
 
     pub async fn serialize_children_of<'c, E: sqlx::Executor<'c, Database = Sqlite>>(
         &self,
-        parent: ResourceId,
+        parent: &ResourceId,
         executor: E,
     ) -> Result<Vec<u8>, ResourceStoreError> {
         let children = self.children_of(parent, executor).await?;
@@ -255,7 +255,7 @@ impl Manager {
 
     pub async fn update_container_content<'c, E: sqlx::Executor<'c, Database = Sqlite>>(
         &self,
-        parent: ResourceId,
+        parent: &ResourceId,
         executor: E,
     ) -> Result<(), ResourceStoreError> {
         let children = self.serialize_children_of(parent, executor).await?;
@@ -268,7 +268,7 @@ impl Manager {
 
     pub async fn parent_of<'c, E: sqlx::Executor<'c, Database = Sqlite>>(
         &self,
-        id: ResourceId,
+        id: &ResourceId,
         executor: E,
     ) -> Result<ResourceId, ResourceStoreError> {
         let maybe_parent = sqlx::query!("SELECT parent FROM resources WHERE id = ?", id)
@@ -293,8 +293,8 @@ impl Manager {
 
     pub async fn create_root(&self) -> Result<(), ResourceStoreError> {
         let root = ResourceMetadata::new(
-            0.into(),
-            0.into(),
+            &ROOT_ID,
+            &ROOT_ID,
             ResourceKind::Container,
             "/",
             vec![],
@@ -306,28 +306,28 @@ impl Manager {
     pub async fn get_root(
         &self,
     ) -> Result<(ResourceMetadata, Vec<ResourceMetadata>), ResourceStoreError> {
-        self.get_container(ROOT_ID).await
+        self.get_container(&ROOT_ID).await
     }
 
     // Returns the whole set of object metadata from the root to the given object.
     // Will fail if a cycle is detected or if any parent id fails to return metadata.
     pub async fn get_full_path(
         &self,
-        id: ResourceId,
+        id: &ResourceId,
     ) -> Result<Vec<ResourceMetadata>, ResourceStoreError> {
         let mut res = vec![];
-        let mut current = id;
+        let mut current = id.clone();
         let mut visited = HashSet::new();
 
         loop {
             if visited.contains(&current) {
                 return Err(ResourceStoreError::ResourceCycle);
             }
-            let meta = self.get_metadata(current).await?;
-            visited.insert(current);
+            let meta = self.get_metadata(&current).await?;
+            visited.insert(current.clone());
             let next = meta.parent();
             res.push(meta);
-            if current == ROOT_ID {
+            if current.is_root() {
                 break;
             }
             current = next;
@@ -369,7 +369,7 @@ impl Manager {
     // Retrieve the object with a given name and parent.
     pub async fn child_by_name(
         &self,
-        parent: ResourceId,
+        parent: &ResourceId,
         name: &str,
     ) -> Result<ResourceMetadata, ResourceStoreError> {
         if name.trim().is_empty() {
@@ -385,7 +385,7 @@ impl Manager {
         .await?;
 
         match record {
-            Some(child) => self.get_metadata(child.id.into()).await,
+            Some(child) => self.get_metadata(&child.id.into()).await,
             None => Err(ResourceStoreError::NoSuchResource),
         }
     }
@@ -460,20 +460,12 @@ impl Manager {
         self.db_pool.close().await
     }
 
-    pub async fn next_id(&self) -> Result<ResourceId, ResourceStoreError> {
-        let max = sqlx::query_scalar!("SELECT id FROM resources ORDER BY id DESC LIMIT 1")
-            .fetch_one(&self.db_pool)
-            .await?;
-
-        Ok((max + 1).into())
-    }
-
     pub async fn create(
         &self,
         metadata: &ResourceMetadata,
         mut content: Option<VariantContent>,
     ) -> Result<(), ResourceStoreError> {
-        self.check_container_leaf(metadata.id(), metadata.parent())
+        self.check_container_leaf(&metadata.id(), &metadata.parent())
             .await?;
 
         // Start a transaction to store the new metadata.
@@ -481,8 +473,8 @@ impl Manager {
         let mut tx2 = self.create_metadata(metadata, tx).await?;
 
         // Update the children content of the parent if this is not creating the root.
-        if metadata.id() != ROOT_ID {
-            self.update_container_content(metadata.parent(), &mut tx2)
+        if !metadata.id().is_root() {
+            self.update_container_content(&metadata.parent(), &mut tx2)
                 .await?;
         }
 
@@ -509,7 +501,7 @@ impl Manager {
         metadata: &ResourceMetadata,
         mut content: Option<VariantContent>,
     ) -> Result<(), ResourceStoreError> {
-        self.check_container_leaf(metadata.id(), metadata.parent())
+        self.check_container_leaf(&metadata.id(), &metadata.parent())
             .await?;
 
         let mut tx = self.db_pool.begin().await?;
@@ -521,8 +513,8 @@ impl Manager {
         let mut tx2 = self.create_metadata(metadata, tx).await?;
 
         // Update the children content of the parent if this is not creating the root.
-        if metadata.id() != ROOT_ID {
-            self.update_container_content(metadata.parent(), &mut tx2)
+        if !metadata.id().is_root() {
+            self.update_container_content(&metadata.parent(), &mut tx2)
                 .await?;
         }
 
@@ -545,7 +537,7 @@ impl Manager {
 
     pub async fn delete_variant(
         &self,
-        id: ResourceId,
+        id: &ResourceId,
         variant_name: &str,
     ) -> Result<(), ResourceStoreError> {
         // 1. Get the metadata for this id.
@@ -574,7 +566,7 @@ impl Manager {
         Ok(())
     }
 
-    pub async fn delete(&self, id: ResourceId) -> Result<(), ResourceStoreError> {
+    pub async fn delete(&self, id: &ResourceId) -> Result<(), ResourceStoreError> {
         let mut tx = self.db_pool.begin().await?;
         let is_container = self.is_container(id).await?;
 
@@ -588,7 +580,7 @@ impl Manager {
 
         if !is_container {
             self.store.delete(id).await?;
-            self.update_container_content(parent_id, &mut tx).await?;
+            self.update_container_content(&parent_id, &mut tx).await?;
             tx.commit().await?;
             return Ok(());
         }
@@ -600,19 +592,19 @@ impl Manager {
 
         // This vector holds the list of remaining containers
         // that need to be checked.
-        let mut containers: Vec<ResourceId> = vec![id];
+        let mut containers: Vec<ResourceId> = vec![id.clone()];
 
         loop {
             let mut new_obj = vec![];
 
             for source_id in containers {
-                let children: Vec<ResourceId> = self.children_of(source_id, &self.db_pool).await?;
+                let children: Vec<ResourceId> = self.children_of(&source_id, &self.db_pool).await?;
 
                 for child in children {
                     // 1. add this child to the final set.
-                    to_delete.insert(child);
+                    to_delete.insert(child.clone());
                     // 2. If it's a container, add it to the list of containers for the next iteration.
-                    if self.is_container(child).await? {
+                    if self.is_container(&child).await? {
                         new_obj.push(child);
                     }
                 }
@@ -632,18 +624,18 @@ impl Manager {
             sqlx::query!("DELETE FROM resources WHERE id = ?", child)
                 .execute(&mut tx)
                 .await?;
-            self.store.delete(child).await?;
+            self.store.delete(&child).await?;
         }
 
         self.store.delete(id).await?;
-        self.update_container_content(parent_id, &mut tx).await?;
+        self.update_container_content(&parent_id, &mut tx).await?;
         tx.commit().await?;
         Ok(())
     }
 
     pub async fn get_metadata(
         &self,
-        id: ResourceId,
+        id: &ResourceId,
     ) -> Result<ResourceMetadata, ResourceStoreError> {
         // Metadata can be retrieved fully from the SQL database.
         match sqlx::query!(
@@ -657,8 +649,8 @@ impl Manager {
         {
             Ok(record) => {
                 let mut meta = ResourceMetadata::new(
-                    record.id.into(),
-                    record.parent.into(),
+                    &record.id.into(),
+                    &record.parent.into(),
                     record.kind.into(),
                     &record.name,
                     vec![],
@@ -714,7 +706,7 @@ impl Manager {
 
     pub async fn get_leaf(
         &self,
-        id: ResourceId,
+        id: &ResourceId,
         variant_name: &str,
     ) -> Result<(ResourceMetadata, BoxedReader), ResourceStoreError> {
         let meta = self.get_metadata(id).await?;
@@ -729,7 +721,7 @@ impl Manager {
 
     pub async fn get_container(
         &self,
-        id: ResourceId,
+        id: &ResourceId,
     ) -> Result<(ResourceMetadata, Vec<ResourceMetadata>), ResourceStoreError> {
         use async_std::io::ReadExt;
 
@@ -749,7 +741,7 @@ impl Manager {
             // Get the metadata for each child.
             let mut res = vec![];
             for child in children {
-                res.push(self.get_metadata(child).await?);
+                res.push(self.get_metadata(&child).await?);
             }
 
             Ok((meta, res))

@@ -8,13 +8,22 @@ use sqlx::{sqlite::SqliteRow, FromRow, Row, Sqlite, Transaction};
 use std::fmt;
 use thiserror::Error;
 
-#[derive(sqlx::Type, Copy, Clone, Debug, Deserialize, Serialize, PartialEq, Eq, Hash)]
+#[derive(sqlx::Type, Clone, Debug, Deserialize, Serialize, PartialEq, Eq, Hash)]
 #[sqlx(transparent)]
-pub struct ResourceId(i64);
+pub struct ResourceId(String);
 
-pub type TransactionResult<'c> = Result<Transaction<'c, Sqlite>, ResourceStoreError>;
+static ROOT_ID_STR: &str = "9e48b88d-4ab5-496b-ad7f-9ecc685128db";
 
-pub static ROOT_ID: ResourceId = ResourceId(0);
+impl ResourceId {
+    #[allow(clippy::new_without_default)]
+    pub fn new() -> Self {
+        Self(uuid::Uuid::new_v4().to_string())
+    }
+
+    pub fn is_root(&self) -> bool {
+        self.0 == ROOT_ID_STR
+    }
+}
 
 impl fmt::Display for ResourceId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -22,14 +31,27 @@ impl fmt::Display for ResourceId {
     }
 }
 
-impl From<i64> for ResourceId {
-    fn from(val: i64) -> Self {
+lazy_static! {
+    pub static ref ROOT_ID: ResourceId = ResourceId(ROOT_ID_STR.into());
+}
+
+pub type TransactionResult<'c> = Result<Transaction<'c, Sqlite>, ResourceStoreError>;
+
+// Only useful for tests
+impl From<i32> for ResourceId {
+    fn from(val: i32) -> ResourceId {
+        ResourceId::from(format!("id-{}", val))
+    }
+}
+
+impl From<String> for ResourceId {
+    fn from(val: String) -> Self {
         ResourceId(val)
     }
 }
 
-impl From<ResourceId> for i64 {
-    fn from(val: ResourceId) -> i64 {
+impl From<ResourceId> for String {
+    fn from(val: ResourceId) -> String {
         val.0
     }
 }
@@ -37,7 +59,7 @@ impl From<ResourceId> for i64 {
 // Extracts a ResourceId from the first column of a row.
 impl<'r> FromRow<'r, SqliteRow> for ResourceId {
     fn from_row(row: &'r SqliteRow) -> Result<Self, sqlx::Error> {
-        Ok(row.get::<i64, usize>(0).into())
+        Ok(row.get::<String, usize>(0).into())
     }
 }
 
@@ -48,8 +70,8 @@ pub struct IdFrec {
 }
 
 impl IdFrec {
-    pub fn new(id: ResourceId, frecency: u32) -> Self {
-        Self { id, frecency }
+    pub fn new(id: &ResourceId, frecency: u32) -> Self {
+        Self { id: id.clone(), frecency }
     }
 }
 
@@ -134,16 +156,16 @@ pub struct ResourceMetadata {
 
 impl ResourceMetadata {
     pub fn new(
-        id: ResourceId,
-        parent: ResourceId,
+        id: &ResourceId,
+        parent: &ResourceId,
         kind: ResourceKind,
         name: &str,
         tags: Vec<String>,
         variants: Vec<Variant>,
     ) -> Self {
         Self {
-            id,
-            parent,
+            id: id.clone(),
+            parent: parent.clone(),
             kind,
             name: name.into(),
             tags,
@@ -163,11 +185,11 @@ impl ResourceMetadata {
     }
 
     pub fn id(&self) -> ResourceId {
-        self.id
+        self.id.clone()
     }
 
     pub fn parent(&self) -> ResourceId {
-        self.parent
+        self.parent.clone()
     }
 
     pub fn kind(&self) -> ResourceKind {
@@ -340,31 +362,34 @@ pub trait ResourceStore {
     /// This is an optimization for container content.
     async fn update_default_variant_from_slice(
         &self,
-        id: ResourceId,
+        id: &ResourceId,
         content: &[u8],
     ) -> Result<(), ResourceStoreError>;
 
     /// Fully deletes a resource: metadata and all variants.
-    async fn delete(&self, id: ResourceId) -> Result<(), ResourceStoreError>;
+    async fn delete(&self, id: &ResourceId) -> Result<(), ResourceStoreError>;
 
     /// Deletes a single variant for this resource.
-    async fn delete_variant(&self, id: ResourceId, variant: &str)
-        -> Result<(), ResourceStoreError>;
+    async fn delete_variant(
+        &self,
+        id: &ResourceId,
+        variant: &str,
+    ) -> Result<(), ResourceStoreError>;
 
     /// Fetches the metadata for a resource.
-    async fn get_metadata(&self, id: ResourceId) -> Result<ResourceMetadata, ResourceStoreError>;
+    async fn get_metadata(&self, id: &ResourceId) -> Result<ResourceMetadata, ResourceStoreError>;
 
     /// Fetches the content for a resource's variant.
     async fn get_variant(
         &self,
-        id: ResourceId,
+        id: &ResourceId,
         variant: &str,
     ) -> Result<BoxedReader, ResourceStoreError>;
 
     /// Fetches both the metadata and the given variant for a resource.
     async fn get_full(
         &self,
-        id: ResourceId,
+        id: &ResourceId,
         variant: &str,
     ) -> Result<(ResourceMetadata, BoxedReader), ResourceStoreError>;
 }

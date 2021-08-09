@@ -1,8 +1,8 @@
 
 CREATE TABLE IF NOT EXISTS resources
 (
-    id       INTEGER  PRIMARY KEY ASC NOT NULL,
-    parent   INTEGER  KEY NOT NULL,
+    id       TEXT     PRIMARY KEY ASC NOT NULL, -- a uuid to identify resources.
+    parent   TEXT     KEY NOT NULL,
     kind     INTEGER  NOT NULL,
     name     TEXT     KEY NOT NULL,
     created  DATETIME NOT NULL,
@@ -12,18 +12,16 @@ CREATE TABLE IF NOT EXISTS resources
     UNIQUE(parent , name)
 );
 
-CREATE INDEX IF NOT EXISTS idx_res_name ON resources(name);
-
 CREATE TABLE IF NOT EXISTS tags
 (
-    id  INTEGER KEY NOT NULL,
-    tag TEXT    NOT NULL,
+    id  TEXT KEY NOT NULL,
+    tag TEXT NOT NULL,
     FOREIGN KEY(id) REFERENCES resources(id) ON DELETE CASCADE
 );
 
 CREATE TABLE IF NOT EXISTS variants
 (
-    id       INTEGER KEY NOT NULL,
+    id       TEXT    KEY NOT NULL,
     name     TEXT    NOT NULL,
     mimeType TEXT    NOT NULL,
     size     INTEGER NOT NULL,
@@ -34,8 +32,8 @@ CREATE INDEX IF NOT EXISTS idx_tag_name ON tags(tag);
 
 CREATE TABLE IF NOT EXISTS fts
 (
-    id    INTEGER KEY NOT NULL,
-    ngram TEXT    NOT NULL,
+    id    TEXT KEY NOT NULL,
+    ngram TEXT NOT NULL,
     FOREIGN KEY(id) REFERENCES resources(id) ON DELETE CASCADE
     UNIQUE(id, ngram)
 );

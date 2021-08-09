@@ -81,7 +81,7 @@ impl Fts {
                 .await?,
             };
             records.iter().for_each(|r| {
-                res.entry(r.id)
+                res.entry(r.id.clone())
                     .and_modify(|e| (*e).0 += 1)
                     .or_insert((1, r.frecency));
             });
@@ -91,7 +91,7 @@ impl Fts {
             .iter()
             .filter_map(|item| {
                 if item.1 .0 == len {
-                    Some(IdFrec::new(*item.0, item.1 .1))
+                    Some(IdFrec::new(item.0, item.1 .1))
                 } else {
                     None
                 }
