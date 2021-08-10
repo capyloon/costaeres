@@ -1,8 +1,6 @@
 /// A wrapper type around a Vec<u8> providing Read and Seek implementations.
-use async_std::io::SeekFrom;
-use async_std::io::{Read, Seek};
-use async_std::task::Context;
-use async_std::task::Poll;
+use async_std::io::{Read, Seek, SeekFrom};
+use async_std::task::{Context, Poll};
 use futures::io::{Error as FutError, ErrorKind};
 use std::pin::Pin;
 
@@ -23,7 +21,6 @@ impl Seek for Array {
         _: &mut Context<'_>,
         pos: SeekFrom,
     ) -> Poll<Result<u64, FutError>> {
-        // Poll::Ready(Ok(new_pos))
         let (base_pos, offset) = match pos {
             SeekFrom::Start(n) => {
                 self.get_mut().pos = n;
@@ -59,8 +56,6 @@ impl Read for Array {
         let upos = me.pos as usize;
         let max: usize = me.data.len() - upos;
         let to_read = std::cmp::min(len, max);
-
-        // println!("ZZZZ buffer len={}, to_read={}", len, to_read);
 
         if to_read == 1 {
             result[0] = me.data[upos];

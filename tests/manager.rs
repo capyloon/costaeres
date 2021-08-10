@@ -33,7 +33,9 @@ async fn prepare_test(index: u32) -> (Config, FileStore) {
     let _ = fs::remove_dir_all(&path).await;
     let _ = fs::create_dir_all(&path).await;
 
-    let store = FileStore::new(&path).await.unwrap();
+    let store = FileStore::new(&path, Box::new(DefaultResourceNameProvider))
+        .await
+        .unwrap();
 
     let config = Config {
         db_path: format!("{}/test_db.sqlite", &path),
@@ -666,9 +668,10 @@ async fn child_by_name() {
 
 async fn migration_check() {
     let (config, store) = prepare_test(17).await;
+    let (_config, store2) = prepare_test(17).await;
 
     {
-        let manager = Manager::new(config.clone(), Box::new(store.clone())).await;
+        let manager = Manager::new(config.clone(), Box::new(store)).await;
         assert!(manager.is_ok(), "Failed to create first manager");
         let manager = manager.unwrap();
 
@@ -678,7 +681,7 @@ async fn migration_check() {
     }
 
     {
-        let manager = Manager::new(config, Box::new(store)).await;
+        let manager = Manager::new(config, Box::new(store2)).await;
         assert!(manager.is_ok(), "Failed to create second manager");
         let manager = manager.unwrap();
 
@@ -693,7 +696,7 @@ async fn migration_check() {
 async fn frecency_update() {
     let (config, store) = prepare_test(18).await;
 
-    let manager = Manager::new(config.clone(), Box::new(store.clone())).await;
+    let manager = Manager::new(config.clone(), Box::new(store)).await;
     assert!(manager.is_ok(), "Failed to create first manager");
     let manager = manager.unwrap();
 

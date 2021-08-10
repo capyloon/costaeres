@@ -24,7 +24,9 @@ async fn file_store() {
     let _ = fs::remove_dir_all("./test-content/0").await;
     let _ = fs::create_dir_all("./test-content/0").await;
 
-    let store = FileStore::new("./test-content/0").await.unwrap();
+    let store = FileStore::new("./test-content/0", Box::new(DefaultResourceNameProvider))
+        .await
+        .unwrap();
 
     // Starting with no content.
     let res = store.get_full(&ROOT_ID, "default").await.err();
@@ -49,6 +51,7 @@ async fn file_store() {
     // Now check that we can get it.
     let res = store.get_full(&ROOT_ID, "default").await.ok().unwrap().0;
     assert!(res.id().is_root());
+    assert_eq!(*res.tags(), vec!["one".to_owned(), "two".to_owned()]);
     assert_eq!(&res.name(), "object 0");
 
     // Check we can't add another object with the same id.

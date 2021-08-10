@@ -3,8 +3,8 @@
 /// ${object.id}.meta for the metadata serialized as Json.
 /// ${object.id}.content for the opaque content.
 use crate::common::{
-    BoxedReader, ResourceId, ResourceKind, ResourceMetadata, ResourceStore, ResourceStoreError,
-    VariantContent,
+    BoxedReader, ResourceId, ResourceKind, ResourceMetadata, ResourceNameProvider, ResourceStore,
+    ResourceStoreError, VariantContent,
 };
 use async_std::{
     fs,
@@ -21,13 +21,16 @@ macro_rules! custom_error {
     };
 }
 
-#[derive(Clone)]
 pub struct FileStore {
     root: PathBuf, // The root path of the storage.
+    name_provider: Box<dyn ResourceNameProvider>,
 }
 
 impl FileStore {
-    pub async fn new<P>(path: P) -> Result<Self, ResourceStoreError>
+    pub async fn new<P>(
+        path: P,
+        name_provider: Box<dyn ResourceNameProvider>,
+    ) -> Result<Self, ResourceStoreError>
     where
         P: AsRef<Path>,
     {
@@ -38,18 +41,21 @@ impl FileStore {
             return custom_error!("NotDirectory");
         }
         let root = path.as_ref().to_path_buf();
-        Ok(Self { root })
+        Ok(Self {
+            root,
+            name_provider,
+        })
     }
 
-    fn meta_path(&self, id: &ResourceId) -> PathBuf {
-        let mut meta_path = self.root.clone();
-        meta_path.push(&format!("{}.meta", id));
-        meta_path
+    pub fn metadata_path(&self, id: &ResourceId) -> PathBuf {
+        let mut metadata_path = self.root.clone();
+        metadata_path.push(&self.name_provider.metadata_name(id));
+        metadata_path
     }
 
-    fn variant_path(&self, id: &ResourceId, variant: &str) -> PathBuf {
+    pub fn variant_path(&self, id: &ResourceId, variant: &str) -> PathBuf {
         let mut content_path = self.root.clone();
-        content_path.push(&format!("{}.content.{}", id, variant));
+        content_path.push(&self.name_provider.variant_name(id, variant));
         content_path
     }
 
@@ -62,7 +68,7 @@ impl FileStore {
         // 0. TODO: check if we have enough storage available.
 
         let id = metadata.id();
-        let meta_path = self.meta_path(&id);
+        let meta_path = self.metadata_path(&id);
 
         // 1. When creating, check if we already have files for this id, and bail out if so.
         if create {
@@ -136,7 +142,7 @@ impl ResourceStore for FileStore {
         let metadata = self.get_metadata(id).await?;
 
         // 2. remove the metadata.
-        let meta_path = self.meta_path(id);
+        let meta_path = self.metadata_path(id);
         fs::remove_file(&meta_path).await?;
 
         // 3. remove variants.
@@ -164,7 +170,7 @@ impl ResourceStore for FileStore {
     async fn get_metadata(&self, id: &ResourceId) -> Result<ResourceMetadata, ResourceStoreError> {
         use async_std::io::ReadExt;
 
-        let meta_path = self.meta_path(id);
+        let meta_path = self.metadata_path(id);
 
         let mut file = File::open(&meta_path)
             .await
@@ -183,7 +189,7 @@ impl ResourceStore for FileStore {
     ) -> Result<(ResourceMetadata, BoxedReader), ResourceStoreError> {
         use async_std::io::ReadExt;
 
-        let meta_path = self.meta_path(id);
+        let meta_path = self.metadata_path(id);
 
         let mut file = File::open(&meta_path)
             .await

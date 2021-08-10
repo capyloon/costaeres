@@ -71,7 +71,10 @@ pub struct IdFrec {
 
 impl IdFrec {
     pub fn new(id: &ResourceId, frecency: u32) -> Self {
-        Self { id: id.clone(), frecency }
+        Self {
+            id: id.clone(),
+            frecency,
+        }
     }
 }
 
@@ -392,4 +395,33 @@ pub trait ResourceStore {
         id: &ResourceId,
         variant: &str,
     ) -> Result<(ResourceMetadata, BoxedReader), ResourceStoreError>;
+}
+
+/// A trait to implement that makes it possible to assign non-default
+/// names to resource files:
+/// - meta files.
+/// - variant files.
+/// This is useful to make it harder to learn about the resource set
+/// based on file names only.
+pub trait ResourceNameProvider : Sync + Send {
+    /// Provides the name for the metadata file.
+    fn metadata_name(&self, id: &ResourceId) -> String;
+
+    // Provides the name for a variant file.
+    fn variant_name(&self, id: &ResourceId, variant: &str) -> String;
+}
+
+pub struct DefaultResourceNameProvider;
+
+unsafe impl Sync for DefaultResourceNameProvider {}
+unsafe impl Send for DefaultResourceNameProvider {}
+
+impl ResourceNameProvider for DefaultResourceNameProvider {
+    fn metadata_name(&self, id: &ResourceId) -> String {
+        format!("{}.meta", id)
+    }
+
+    fn variant_name(&self, id: &ResourceId, variant: &str) -> String {
+        format!("{}.{}.content", id, variant)
+    }
 }
