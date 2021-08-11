@@ -54,6 +54,11 @@ async fn xor_store() {
     assert_eq!(*res.tags(), vec!["one".to_owned(), "two".to_owned()]);
     assert_eq!(&res.name(), "object 0");
 
+    // But that with the wrong xor value we would not get it.
+    let store2 = new_xor_store("./test-content/100", 5).await.unwrap();
+    let res = store2.get_full(&ROOT_ID, "default").await;
+    assert!(res.is_err());
+
     // Check we can't add another object with the same id.
     let res = store
         .create(&meta, Some(default_content().await))
