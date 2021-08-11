@@ -4,7 +4,7 @@
 /// ${object.id}.content for the opaque content.
 use crate::common::{
     BoxedReader, ResourceId, ResourceKind, ResourceMetadata, ResourceNameProvider, ResourceStore,
-    ResourceStoreError, VariantContent,
+    ResourceStoreError, ResourceTransformer, VariantContent,
 };
 use async_std::{
     fs,
@@ -24,12 +24,14 @@ macro_rules! custom_error {
 pub struct FileStore {
     root: PathBuf, // The root path of the storage.
     name_provider: Box<dyn ResourceNameProvider>,
+    transformer: Box<dyn ResourceTransformer>,
 }
 
 impl FileStore {
     pub async fn new<P>(
         path: P,
         name_provider: Box<dyn ResourceNameProvider>,
+        transformer: Box<dyn ResourceTransformer>,
     ) -> Result<Self, ResourceStoreError>
     where
         P: AsRef<Path>,
@@ -44,6 +46,7 @@ impl FileStore {
         Ok(Self {
             root,
             name_provider,
+            transformer,
         })
     }
 
@@ -81,7 +84,9 @@ impl FileStore {
 
         // 2. Store the metadata.
         let mut file = File::create(&meta_path).await?;
-        let meta = serde_json::to_vec(&metadata)?;
+        let meta = self
+            .transformer
+            .transform_array_to(&serde_json::to_vec(metadata)?);
         file.write_all(&meta).await?;
         file.sync_all().await?;
 
@@ -98,7 +103,8 @@ impl FileStore {
             }
             let mut file = File::create(&self.variant_path(&id, &name)).await?;
             file.set_len(content.0.size() as _).await?;
-            futures::io::copy(content.1, &mut file).await?;
+            let writer = self.transformer.transform_to(content.1);
+            futures::io::copy(writer, &mut file).await?;
             file.sync_all().await?;
         }
 
@@ -131,7 +137,11 @@ impl ResourceStore for FileStore {
     ) -> Result<(), ResourceStoreError> {
         let content_path = self.variant_path(id, "default");
         let mut file = File::create(&content_path).await?;
-        futures::io::copy(content, &mut file).await?;
+        futures::io::copy(
+            self.transformer.transform_array_to(content).as_slice(),
+            &mut file,
+        )
+        .await?;
         file.sync_all().await?;
 
         Ok(())
@@ -177,7 +187,8 @@ impl ResourceStore for FileStore {
             .map_err(|_| ResourceStoreError::NoSuchResource)?;
         let mut buffer = vec![];
         file.read_to_end(&mut buffer).await?;
-        let metadata: ResourceMetadata = serde_json::from_slice(&buffer)?;
+        let metadata: ResourceMetadata =
+            serde_json::from_slice(&self.transformer.transform_array_from(&buffer))?;
 
         Ok(metadata)
     }
@@ -196,14 +207,15 @@ impl ResourceStore for FileStore {
             .map_err(|_| ResourceStoreError::NoSuchResource)?;
         let mut buffer = vec![];
         file.read_to_end(&mut buffer).await?;
-        let metadata: ResourceMetadata = serde_json::from_slice(&buffer)?;
+        let metadata: ResourceMetadata =
+            serde_json::from_slice(&self.transformer.transform_array_from(&buffer))?;
 
         let content_path = self.variant_path(id, name);
         let file = File::open(&content_path)
             .await
             .map_err(|_| ResourceStoreError::NoSuchResource)?;
 
-        Ok((metadata, Box::new(file)))
+        Ok((metadata, self.transformer.transform_from(Box::new(file))))
     }
 
     async fn get_variant(
@@ -217,6 +229,6 @@ impl ResourceStore for FileStore {
             .await
             .map_err(|_| ResourceStoreError::NoSuchResource)?;
 
-        Ok(Box::new(file))
+        Ok(self.transformer.transform_from(Box::new(file)))
     }
 }

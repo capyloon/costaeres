@@ -403,7 +403,7 @@ pub trait ResourceStore {
 /// - variant files.
 /// This is useful to make it harder to learn about the resource set
 /// based on file names only.
-pub trait ResourceNameProvider : Sync + Send {
+pub trait ResourceNameProvider: Sync + Send {
     /// Provides the name for the metadata file.
     fn metadata_name(&self, id: &ResourceId) -> String;
 
@@ -423,5 +423,44 @@ impl ResourceNameProvider for DefaultResourceNameProvider {
 
     fn variant_name(&self, id: &ResourceId, variant: &str) -> String {
         format!("{}.{}.content", id, variant)
+    }
+}
+
+/// A trait to implement in order to transform data stored as it is
+/// read and written.
+pub trait ResourceTransformer: Sync + Send  {
+    /// Creates a wrapper around a reader use to write a resource to storage.
+    fn transform_to(&self, source: BoxedReader) -> BoxedReader;
+
+    /// Creates a wrapper around a reader use to read a resource from storage.
+    fn transform_from(&self, source: BoxedReader) -> BoxedReader;
+
+    /// Transforms an array that will be written.
+    fn transform_array_to(&self, source: &[u8]) -> Vec<u8>;
+
+    /// Transforms an array that was read.
+    fn transform_array_from(&self, source: &[u8]) -> Vec<u8>;
+}
+
+pub struct IdentityTransformer;
+
+unsafe impl Sync for IdentityTransformer {}
+unsafe impl Send for IdentityTransformer {}
+
+impl ResourceTransformer for IdentityTransformer {
+    fn transform_to(&self, source: BoxedReader) -> BoxedReader {
+        source
+    }
+
+    fn transform_from(&self, source: BoxedReader) -> BoxedReader {
+        source
+    }
+
+    fn transform_array_to(&self, source: &[u8]) -> Vec<u8> {
+        source.to_vec()
+    }
+
+    fn transform_array_from(&self, source: &[u8]) -> Vec<u8> {
+        source.to_vec()
     }
 }

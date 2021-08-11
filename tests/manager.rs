@@ -33,9 +33,13 @@ async fn prepare_test(index: u32) -> (Config, FileStore) {
     let _ = fs::remove_dir_all(&path).await;
     let _ = fs::create_dir_all(&path).await;
 
-    let store = FileStore::new(&path, Box::new(DefaultResourceNameProvider))
-        .await
-        .unwrap();
+    let store = FileStore::new(
+        &path,
+        Box::new(DefaultResourceNameProvider),
+        Box::new(IdentityTransformer),
+    )
+    .await
+    .unwrap();
 
     let config = Config {
         db_path: format!("{}/test_db.sqlite", &path),

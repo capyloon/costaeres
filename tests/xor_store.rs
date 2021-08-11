@@ -1,6 +1,6 @@
 use async_std::fs;
 use costaeres::common::*;
-use costaeres::file_store::*;
+use costaeres::xor_store::*;
 
 fn named_variant(name: &str) -> Variant {
     Variant::new(name, "application/octet-stream", 42)
@@ -20,17 +20,13 @@ async fn default_content() -> VariantContent {
 }
 
 #[async_std::test]
-async fn file_store() {
-    let _ = fs::remove_dir_all("./test-content/0").await;
-    let _ = fs::create_dir_all("./test-content/0").await;
+async fn xor_store() {
+    env_logger::init();
 
-    let store = FileStore::new(
-        "./test-content/0",
-        Box::new(DefaultResourceNameProvider),
-        Box::new(IdentityTransformer),
-    )
-    .await
-    .unwrap();
+    let _ = fs::remove_dir_all("./test-content/100").await;
+    let _ = fs::create_dir_all("./test-content/100").await;
+
+    let store = new_xor_store("./test-content/100", 32).await.unwrap();
 
     // Starting with no content.
     let res = store.get_full(&ROOT_ID, "default").await.err();

@@ -9,3 +9,4 @@ pub mod fts;
 pub mod indexer;
 pub mod manager;
 pub mod scorer;
+pub mod xor_store;
