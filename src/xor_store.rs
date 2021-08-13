@@ -21,8 +21,7 @@ impl XorNameProvider {
     /// Transform a string in a xored + base64 version, safely usable as a file name.
     pub fn transform(&self, what: &str) -> String {
         let xored: Vec<u8> = what.chars().map(|c| (c as u8) ^ self.xor).collect();
-        let res = base64::encode_config(&xored, base64::BCRYPT);
-        res
+        base64::encode_config(&xored, base64::BCRYPT)
     }
 }
 
@@ -48,8 +47,8 @@ impl XorTransformer {
 
 fn xor_buffer(xor: u8, buffer: &mut [u8], max: usize) {
     let len = std::cmp::min(max, buffer.len());
-    for i in 0..len {
-        buffer[i] ^= xor;
+    for item in buffer.iter_mut().take(len) {
+        *item ^= xor;
     }
 }
 
@@ -131,4 +130,16 @@ where
         Box::new(XorTransformer::new(xor)),
     )
     .await
+}
+
+#[test]
+fn xor_buffer_roundtrip() {
+    let mut buf = [0u8; 2];
+    xor_buffer(32, &mut buf, 2);
+    assert_eq!(buf[0], 32);
+    assert_eq!(buf[0], 32);
+
+    xor_buffer(32, &mut buf, 2);
+    assert_eq!(buf[0], 0);
+    assert_eq!(buf[0], 0);
 }
