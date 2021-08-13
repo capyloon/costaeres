@@ -62,6 +62,17 @@ impl FileStore {
         content_path
     }
 
+    /// Creates a file and set permission to rw for the owner only.
+    async fn create_file<P: AsRef<Path>>(path: P) -> Result<File, ResourceStoreError> {
+        use std::os::unix::fs::PermissionsExt;
+
+        let file = File::create(&path).await?;
+        file.set_permissions(async_std::fs::Permissions::from_mode(0o600))
+            .await?;
+
+        Ok(file)
+    }
+
     async fn create_or_update(
         &self,
         metadata: &ResourceMetadata,
@@ -83,7 +94,7 @@ impl FileStore {
         }
 
         // 2. Store the metadata.
-        let mut file = File::create(&meta_path).await?;
+        let mut file = Self::create_file(&meta_path).await?;
         let meta = self
             .transformer
             .transform_array_to(&serde_json::to_vec(metadata)?);
@@ -101,7 +112,7 @@ impl FileStore {
                 error!("Variant '{}' is not in metadata.", name);
                 return Err(ResourceStoreError::InvalidVariant(name));
             }
-            let mut file = File::create(&self.variant_path(&id, &name)).await?;
+            let mut file = Self::create_file(&self.variant_path(&id, &name)).await?;
             file.set_len(content.0.size() as _).await?;
             let writer = self.transformer.transform_to(content.1);
             futures::io::copy(writer, &mut file).await?;
@@ -136,7 +147,7 @@ impl ResourceStore for FileStore {
         content: &[u8],
     ) -> Result<(), ResourceStoreError> {
         let content_path = self.variant_path(id, "default");
-        let mut file = File::create(&content_path).await?;
+        let mut file = Self::create_file(&content_path).await?;
         futures::io::copy(
             self.transformer.transform_array_to(content).as_slice(),
             &mut file,
