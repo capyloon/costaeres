@@ -53,7 +53,6 @@ impl Manager {
     ) -> Result<Self, ResourceStoreError> {
         let options = SqliteConnectOptions::from_str(&format!("sqlite://{}", config.db_path))?
             .create_if_missing(true)
-            .shared_cache(true)
             .auto_vacuum(sqlx::sqlite::SqliteAutoVacuum::Incremental)
             .log_statements(log::LevelFilter::Trace)
             .log_slow_statements(
