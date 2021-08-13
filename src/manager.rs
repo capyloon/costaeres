@@ -30,6 +30,7 @@ use libsqlite3_sys::{
     sqlite3_create_function, SQLITE_DETERMINISTIC, SQLITE_DIRECTONLY, SQLITE_INNOCUOUS, SQLITE_UTF8,
 };
 use log::{debug, error};
+use sqlx::ConnectOptions;
 use sqlx::{
     sqlite::{SqliteConnectOptions, SqlitePoolOptions},
     Sqlite, SqlitePool, Transaction,
@@ -51,7 +52,14 @@ impl Manager {
         store: Box<dyn ResourceStore + Send + Sync>,
     ) -> Result<Self, ResourceStoreError> {
         let options = SqliteConnectOptions::from_str(&format!("sqlite://{}", config.db_path))?
-            .create_if_missing(true);
+            .create_if_missing(true)
+            .shared_cache(true)
+            .auto_vacuum(sqlx::sqlite::SqliteAutoVacuum::Incremental)
+            .log_statements(log::LevelFilter::Trace)
+            .log_slow_statements(
+                log::LevelFilter::Error,
+                std::time::Duration::from_millis(10),
+            ).clone();
 
         // Register our custom function to evaluate frecency based on the scorer serialized representation.
         let pool_options = SqlitePoolOptions::new().after_connect(|conn| {
