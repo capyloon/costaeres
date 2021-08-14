@@ -24,6 +24,7 @@ use crate::fts::Fts;
 use crate::indexer::Indexer;
 use crate::scorer::sqlite_frecency;
 use crate::scorer::VisitEntry;
+use crate::timer::Timer;
 use bincode::Options;
 use chrono::{DateTime, Utc};
 use libsqlite3_sys::{
@@ -57,8 +58,9 @@ impl Manager {
             .log_statements(log::LevelFilter::Trace)
             .log_slow_statements(
                 log::LevelFilter::Error,
-                std::time::Duration::from_millis(10),
-            ).clone();
+                std::time::Duration::from_millis(100),
+            )
+            .clone();
 
         // Register our custom function to evaluate frecency based on the scorer serialized representation.
         let pool_options = SqlitePoolOptions::new().after_connect(|conn| {
@@ -127,6 +129,7 @@ impl Manager {
         metadata: &ResourceMetadata,
         mut tx: Transaction<'c, Sqlite>,
     ) -> TransactionResult<'c> {
+        let _timer = Timer::start("create_metadata");
         let id = metadata.id();
         let parent = metadata.parent();
         let kind = metadata.kind();

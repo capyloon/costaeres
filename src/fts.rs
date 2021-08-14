@@ -5,6 +5,7 @@
 /// manage object removal at the expense of disk space usage and query performance.
 /// TODO: switch to a Key Value store (eg. Sled) instead, or a fts engine like Sonic.
 use crate::common::{IdFrec, ResourceId, ResourceStoreError, TransactionResult};
+use crate::timer::Timer;
 use sqlx::{Sqlite, SqlitePool, Transaction};
 use std::collections::{HashMap, HashSet};
 
@@ -28,12 +29,70 @@ impl Fts {
         mut tx: Transaction<'c, Sqlite>,
     ) -> TransactionResult<'c> {
         let ngrams = ngrams(text, self.max_substring_len);
-        // let mut tx = self.db_pool.begin().await?;
-        for ngram in ngrams {
+        let _timer = Timer::start(&format!("Fts::add_text {} ngrams", ngrams.len()));
+
+        let mut knowns: HashSet<String> = HashSet::new();
+        sqlx::query!(
+            "SELECT ngram0, ngram1, ngram2, ngram3, ngram4,
+                    ngram5, ngram6, ngram7, ngram8, ngram9 FROM fts WHERE id = ?",
+            id
+        )
+        .map(|r| {
+            macro_rules! insert_ngram {
+                ($num:tt) => {
+                    if !r.$num.is_empty() {
+                        knowns.insert(r.$num.clone());
+                    }
+                };
+            }
+            insert_ngram!(ngram0);
+            insert_ngram!(ngram1);
+            insert_ngram!(ngram2);
+            insert_ngram!(ngram3);
+            insert_ngram!(ngram4);
+            insert_ngram!(ngram5);
+            insert_ngram!(ngram6);
+            insert_ngram!(ngram7);
+            insert_ngram!(ngram8);
+            insert_ngram!(ngram9);
+        })
+        .fetch_all(&mut tx)
+        .await?;
+
+        let to_insert: Vec<String> = ngrams
+            .iter()
+            .filter(|item| !knowns.contains(*item))
+            .cloned()
+            .collect();
+
+        for chunk in to_insert.chunks(10) {
+            let empty = &String::new();
+            let mut iter = chunk.iter();
+            let chunk0 = iter.next().unwrap_or_else(|| empty);
+            let chunk1 = iter.next().unwrap_or_else(|| empty);
+            let chunk2 = iter.next().unwrap_or_else(|| empty);
+            let chunk3 = iter.next().unwrap_or_else(|| empty);
+            let chunk4 = iter.next().unwrap_or_else(|| empty);
+            let chunk5 = iter.next().unwrap_or_else(|| empty);
+            let chunk6 = iter.next().unwrap_or_else(|| empty);
+            let chunk7 = iter.next().unwrap_or_else(|| empty);
+            let chunk8 = iter.next().unwrap_or_else(|| empty);
+            let chunk9 = iter.next().unwrap_or_else(|| empty);
+
             sqlx::query!(
-                "INSERT OR IGNORE INTO fts ( id, ngram ) VALUES ( ?1, ?2 )",
+                "INSERT OR IGNORE INTO fts ( id, ngram0, ngram1, ngram2, ngram3, ngram4, ngram5, ngram6, ngram7, ngram8, ngram9 )
+                VALUES ( ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ? )",
                 id,
-                ngram
+                chunk0,
+                chunk1,
+                chunk2,
+                chunk3,
+                chunk4,
+                chunk5,
+                chunk6,
+                chunk7,
+                chunk8,
+                chunk9
             )
             .execute(&mut tx)
             .await?;
@@ -48,6 +107,8 @@ impl Fts {
         text: &str,
         tag: Option<String>,
     ) -> Result<Vec<IdFrec>, ResourceStoreError> {
+        let _timer = Timer::start(&format!("Fts::search {} {:?}", text, tag));
+
         let mut tx = self.db_pool.begin().await?;
         // Map ResourceId -> (ngram matches, frecency)
         let mut res: HashMap<ResourceId, (usize, u32)> = HashMap::new();
@@ -64,19 +125,41 @@ impl Fts {
                 None => sqlx::query_as(
                     r#"SELECT resources.id, frecency(resources.scorer) AS frecency FROM resources
                         LEFT JOIN fts
-                        WHERE fts.ngram = ? and fts.id = resources.id"#,
+                        WHERE fts.id = resources.id
+                        AND (fts.ngram0 = ? OR fts.ngram1 = ? OR fts.ngram2 = ? OR fts.ngram3 = ? OR fts.ngram4 = ?
+                          OR fts.ngram5 = ? OR fts.ngram6 = ? OR fts.ngram7 = ? OR fts.ngram8 = ? OR fts.ngram9 = ? )"#,
                 )
-                .bind(word)
+                .bind(&word)
+                .bind(&word)
+                .bind(&word)
+                .bind(&word)
+                .bind(&word)
+                .bind(&word)
+                .bind(&word)
+                .bind(&word)
+                .bind(&word)
+                .bind(&word)
                 .fetch_all(&mut tx)
                 .await?,
                 Some(ref tag) => sqlx::query_as(
                     r#"SELECT resources.id, frecency(resources.scorer) AS frecency FROM resources
                         LEFT JOIN fts, tags
-                        WHERE tags.tag = ? AND fts.ngram = ?
-                        AND fts.id = resources.id AND tags.id = resources.id"#,
+                        WHERE tags.tag = ?
+                        AND fts.id = resources.id AND tags.id = resources.id
+                        AND (fts.ngram0 = ? OR fts.ngram1 = ? OR fts.ngram2 = ? OR fts.ngram3 = ? OR fts.ngram4 = ?
+                          OR fts.ngram5 = ? OR fts.ngram6 = ? OR fts.ngram7 = ? OR fts.ngram8 = ? OR fts.ngram9 = ? )"#,
                 )
                 .bind(tag)
-                .bind(word)
+                .bind(&word)
+                .bind(&word)
+                .bind(&word)
+                .bind(&word)
+                .bind(&word)
+                .bind(&word)
+                .bind(&word)
+                .bind(&word)
+                .bind(&word)
+                .bind(&word)
                 .fetch_all(&mut tx)
                 .await?,
             };
