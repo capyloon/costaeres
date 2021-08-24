@@ -90,3 +90,17 @@ pub fn create_places_indexer() -> FlatJsonIndexer {
 pub fn create_contacts_indexer() -> FlatJsonIndexer {
     FlatJsonIndexer::new("contact", &["name", "phone", "email"])
 }
+
+// Indexer for the content of a "Media" object.
+// This is a json value with the following format:
+// {"url":"https://beatbump.ml/search/echoes%2520pink%2520floyd?filter=EgWKAQIIAWoKEAMQBBAKEAkQBQ%3D%3D",
+//  "icon":"https://beatbump.ml/logo-header.png",
+//  "title":"Echoes",
+//  "album":"Meddle",
+//  "artist": "Pink Floyd",
+//  "artwork":[{"sizes":"128x128",
+//              "src":"https://lh3.googleusercontent.com/p2_pHFA7u4uxGvEYoKvhiyxLDUCxPxJCMwRQLVMAMs4FF5lxb0hcVAa6iJY4UvMjrSiAwM6HiqXzyy4=w128-h128-l90-rj",
+//              "type":"image/jpeg"}]}
+pub fn create_media_indexer() -> FlatJsonIndexer {
+    FlatJsonIndexer::new("media", &["title", "album", "artist"])
+}
