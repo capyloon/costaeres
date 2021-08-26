@@ -438,10 +438,24 @@ impl Manager {
         }
 
         let results: Vec<IdFrec> = sqlx::query_as(
-            "SELECT id, frecency(resources.scorer) AS frecency FROM resources ORDER BY frecency DESC LIMIT ?",
+            "SELECT id, frecency(scorer) AS frecency FROM resources ORDER BY frecency DESC LIMIT ?",
         ).bind(count).fetch_all(&self.db_pool)
             .await?;
 
+        Ok(results)
+    }
+
+    pub async fn last_modified(&self, count: u32) -> Result<Vec<IdFrec>, ResourceStoreError> {
+        if count == 0 {
+            return Err(ResourceStoreError::Custom("ZeroCountQuery".into()));
+        }
+
+        let results: Vec<IdFrec> = sqlx::query_as(
+            "SELECT id, frecency(scorer) AS frecency FROM resources ORDER BY modified DESC LIMIT ?",
+        ).bind(count).fetch_all(&self.db_pool)
+            .await?;
+
+        log::info!("last_modified({}): {:?}", count, results);
         Ok(results)
     }
 
