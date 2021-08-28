@@ -99,6 +99,23 @@ impl Scorer {
         self.all_time_visits += 1;
     }
 
+    // Used for bench
+    // pub fn frecency_float(&self) -> u32 {
+    //     if self.entries.is_empty() {
+    //         return 0;
+    //     }
+
+    //     // For each sampled visit, the score is (bonus / 100.0) * weight
+    //     // The final score for each item is ceiling(total visit count * sum of points for sampled visits / number of sampled visits)
+
+    //     let sum = (&self.entries)
+    //         .iter()
+    //         .map(|item| (item.priority.bonus() * weight_for(item.timestamp)) as f32 / 100.0)
+    //         .sum::<f32>();
+
+    //     self.all_time_visits * sum.round() as u32 / self.entries.len() as u32
+    // }
+
     pub fn frecency(&self) -> u32 {
         if self.entries.is_empty() {
             return 0;
@@ -109,10 +126,10 @@ impl Scorer {
 
         let sum = (&self.entries)
             .iter()
-            .map(|item| (item.priority.bonus() * weight_for(item.timestamp)) as f32 / 100.0)
-            .sum::<f32>();
+            .map(|item| (item.priority.bonus() * weight_for(item.timestamp)))
+            .sum::<u32>();
 
-        self.all_time_visits * sum.round() as u32 / self.entries.len() as u32
+        self.all_time_visits * sum / (100 * self.entries.len() as u32)
     }
 
     #[cfg(test)]
@@ -195,16 +212,19 @@ mod tests {
         // Add 2 visits of normal priority with a 10 day interval.
         let mut score = Scorer::default();
         assert_eq!(score.frecency(), 0);
+        // assert_eq!(score.frecency(), score.frecency_float());
 
         let now = Utc::now();
         score.add(&VisitEntry::new(&now, VisitPriority::Normal));
         assert_eq!(score.frecency(), 100);
+        // assert_eq!(score.frecency(), score.frecency_float());
 
         score.add(&VisitEntry::new(
             &(now - Duration::days(10)),
             VisitPriority::Normal,
         ));
         assert_eq!(score.frecency(), 170);
+        // assert_eq!(score.frecency(), score.frecency_float());
 
         // Add 2 visits with a 10 day interval, one with high priority.
         let mut score = Scorer::default();
@@ -212,11 +232,63 @@ mod tests {
         let now = Utc::now();
         score.add(&VisitEntry::new(&now, VisitPriority::Normal));
         assert_eq!(score.frecency(), 100);
+        // assert_eq!(score.frecency(), score.frecency_float());
 
         score.add(&VisitEntry::new(
             &(now - Duration::days(10)),
             VisitPriority::High,
         ));
         assert_eq!(score.frecency(), 205);
+        // assert_eq!(score.frecency(), score.frecency_float());
     }
 }
+
+// use test::Bencher;
+
+// #[bench]
+// fn bench_frecency_int(b: &mut Bencher) {
+//     use chrono::Duration;
+
+//     let mut score = Scorer::default();
+//     let now = Utc::now();
+//     score.add(&VisitEntry::new(&now, VisitPriority::Normal));
+//     score.add(&VisitEntry::new(
+//         &(now - Duration::days(10)),
+//         VisitPriority::Normal,
+//     ));
+//     score.add(&VisitEntry::new(
+//         &(now - Duration::days(20)),
+//         VisitPriority::High,
+//     ));
+//     let bytes = score.as_bincode();
+
+//     b.iter(|| {
+//         let score = Scorer::from_bincode(&bytes);
+//         let _frec = score.frecency();
+//     });
+// }
+
+// #[bench]
+// fn bench_frecency_float(b: &mut Bencher) {
+//     use chrono::Duration;
+
+//     let mut score = Scorer::default();
+//     let now = Utc::now();
+//     score.add(&VisitEntry::new(&now, VisitPriority::Normal));
+//     for i in 1..10 {
+//         score.add(&VisitEntry::new(
+//             &(now - Duration::days(i)),
+//             VisitPriority::Normal,
+//         ));
+//     }
+//     score.add(&VisitEntry::new(
+//         &(now - Duration::days(20)),
+//         VisitPriority::High,
+//     ));
+//     let bytes = score.as_bincode();
+
+//     b.iter(|| {
+//         let score = Scorer::from_bincode(&bytes);
+//         let _frec = score.frecency_float();
+//     });
+// }
