@@ -31,6 +31,7 @@ use libsqlite3_sys::{
     sqlite3_create_function, SQLITE_DETERMINISTIC, SQLITE_DIRECTONLY, SQLITE_INNOCUOUS, SQLITE_UTF8,
 };
 use log::{debug, error};
+use lru::LruCache;
 use sqlx::ConnectOptions;
 use sqlx::{
     sqlite::{SqliteConnectOptions, SqlitePoolOptions},
@@ -45,6 +46,7 @@ pub struct Manager {
     store: Box<dyn ResourceStore + Send + Sync>,
     fts: Fts,
     indexers: Vec<Box<dyn Indexer + Send + Sync>>, // The list of indexers available.
+    cache: LruCache<ResourceId, ResourceMetadata>, // Cache frequently accessed metadata.
 }
 
 impl Manager {
@@ -98,12 +100,21 @@ impl Manager {
             store,
             fts,
             indexers: Vec::new(),
+            cache: LruCache::new(config.metadata_cache_capacity),
         })
+    }
+
+    fn evict_from_cache(&mut self, id: &ResourceId) {
+        self.cache.pop(id);
+    }
+
+    fn update_cache(&mut self, metadata: &ResourceMetadata) {
+        self.cache.put(metadata.id(), (*metadata).clone());
     }
 
     /// Update the frecency for that metadata.
     pub async fn visit(
-        &self,
+        &mut self,
         metadata: &mut ResourceMetadata,
         visit: &VisitEntry,
     ) -> Result<(), ResourceStoreError> {
@@ -120,12 +131,14 @@ impl Manager {
         .execute(&self.db_pool)
         .await?;
 
+        self.evict_from_cache(&id);
+
         Ok(())
     }
 
     /// Use a existing transation to run the sql commands needed to create a metadata record.
     async fn create_metadata<'c>(
-        &self,
+        &mut self,
         metadata: &ResourceMetadata,
         mut tx: Transaction<'c, Sqlite>,
     ) -> TransactionResult<'c> {
@@ -178,6 +191,8 @@ impl Manager {
 
         // Insert the full text search data.
         let tx2 = self.fts.add_text(id, &name, tx).await?;
+
+        self.update_cache(metadata);
 
         Ok(tx2)
     }
@@ -301,7 +316,7 @@ impl Manager {
         Ok(())
     }
 
-    pub async fn create_root(&self) -> Result<(), ResourceStoreError> {
+    pub async fn create_root(&mut self) -> Result<(), ResourceStoreError> {
         let root = ResourceMetadata::new(
             &ROOT_ID,
             &ROOT_ID,
@@ -314,7 +329,7 @@ impl Manager {
     }
 
     pub async fn get_root(
-        &self,
+        &mut self,
     ) -> Result<(ResourceMetadata, Vec<ResourceMetadata>), ResourceStoreError> {
         self.get_container(&ROOT_ID).await
     }
@@ -322,7 +337,7 @@ impl Manager {
     // Returns the whole set of object metadata from the root to the given object.
     // Will fail if a cycle is detected or if any parent id fails to return metadata.
     pub async fn get_full_path(
-        &self,
+        &mut self,
         id: &ResourceId,
     ) -> Result<Vec<ResourceMetadata>, ResourceStoreError> {
         let mut res = vec![];
@@ -378,7 +393,7 @@ impl Manager {
 
     // Retrieve the object with a given name and parent.
     pub async fn child_by_name(
-        &self,
+        &mut self,
         parent: &ResourceId,
         name: &str,
     ) -> Result<ResourceMetadata, ResourceStoreError> {
@@ -439,8 +454,10 @@ impl Manager {
 
         let results: Vec<IdFrec> = sqlx::query_as(
             "SELECT id, frecency(scorer) AS frecency FROM resources ORDER BY frecency DESC LIMIT ?",
-        ).bind(count).fetch_all(&self.db_pool)
-            .await?;
+        )
+        .bind(count)
+        .fetch_all(&self.db_pool)
+        .await?;
 
         Ok(results)
     }
@@ -452,8 +469,10 @@ impl Manager {
 
         let results: Vec<IdFrec> = sqlx::query_as(
             "SELECT id, frecency(scorer) AS frecency FROM resources ORDER BY modified DESC LIMIT ?",
-        ).bind(count).fetch_all(&self.db_pool)
-            .await?;
+        )
+        .bind(count)
+        .fetch_all(&self.db_pool)
+        .await?;
 
         log::info!("last_modified({}): {:?}", count, results);
         Ok(results)
@@ -485,7 +504,7 @@ impl Manager {
     }
 
     pub async fn create(
-        &self,
+        &mut self,
         metadata: &ResourceMetadata,
         mut content: Option<VariantContent>,
     ) -> Result<(), ResourceStoreError> {
@@ -521,7 +540,7 @@ impl Manager {
     }
 
     pub async fn update(
-        &self,
+        &mut self,
         metadata: &ResourceMetadata,
         mut content: Option<VariantContent>,
     ) -> Result<(), ResourceStoreError> {
@@ -560,7 +579,7 @@ impl Manager {
     }
 
     pub async fn delete_variant(
-        &self,
+        &mut self,
         id: &ResourceId,
         variant_name: &str,
     ) -> Result<(), ResourceStoreError> {
@@ -590,7 +609,7 @@ impl Manager {
         Ok(())
     }
 
-    pub async fn delete(&self, id: &ResourceId) -> Result<(), ResourceStoreError> {
+    pub async fn delete(&mut self, id: &ResourceId) -> Result<(), ResourceStoreError> {
         let mut tx = self.db_pool.begin().await?;
         let is_container = self.is_container(id).await?;
 
@@ -606,6 +625,7 @@ impl Manager {
             self.store.delete(id).await?;
             self.update_container_content(&parent_id, &mut tx).await?;
             tx.commit().await?;
+            self.evict_from_cache(id);
             return Ok(());
         }
 
@@ -649,18 +669,26 @@ impl Manager {
                 .execute(&mut tx)
                 .await?;
             self.store.delete(&child).await?;
+            self.evict_from_cache(&child);
         }
 
         self.store.delete(id).await?;
         self.update_container_content(&parent_id, &mut tx).await?;
         tx.commit().await?;
+
+        self.evict_from_cache(id);
         Ok(())
     }
 
     pub async fn get_metadata(
-        &self,
+        &mut self,
         id: &ResourceId,
     ) -> Result<ResourceMetadata, ResourceStoreError> {
+        // Check if we have this metadata in the LRU cache.
+        if let Some(meta) = self.cache.get(id) {
+            return Ok(meta.clone());
+        }
+
         // Metadata can be retrieved fully from the SQL database.
         match sqlx::query!(
             r#"
@@ -709,6 +737,8 @@ impl Manager {
                 meta.set_created(DateTime::<Utc>::from_utc(record.created, Utc));
                 meta.set_modified(DateTime::<Utc>::from_utc(record.modified, Utc));
                 meta.set_scorer_from_db(&record.scorer);
+
+                self.update_cache(&meta);
                 Ok(meta)
             }
             Err(err) => {
@@ -723,13 +753,14 @@ impl Manager {
                 let tx2 = self.create_metadata(&metadata, tx).await?;
                 tx2.commit().await?;
 
+                self.update_cache(&metadata);
                 Ok(metadata)
             }
         }
     }
 
     pub async fn get_leaf(
-        &self,
+        &mut self,
         id: &ResourceId,
         variant_name: &str,
     ) -> Result<(ResourceMetadata, BoxedReader), ResourceStoreError> {
@@ -744,7 +775,7 @@ impl Manager {
     }
 
     pub async fn get_container(
-        &self,
+        &mut self,
         id: &ResourceId,
     ) -> Result<(ResourceMetadata, Vec<ResourceMetadata>), ResourceStoreError> {
         use async_std::io::ReadExt;

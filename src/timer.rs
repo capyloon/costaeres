@@ -17,6 +17,10 @@ impl Timer {
 
 impl Drop for Timer {
     fn drop(&mut self) {
-        log::info!("[timer] {} : {}ms", self.name, self.start.elapsed().as_millis());
+        log::info!(
+            "[timer] {} : {}ms",
+            self.name,
+            self.start.elapsed().as_millis()
+        );
     }
 }

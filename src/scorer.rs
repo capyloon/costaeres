@@ -54,7 +54,7 @@ impl VisitEntry {
     }
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Scorer {
     #[serde(rename = "c")]
     all_time_visits: u32, // The total number of visits, which can be greater than the entries we keep.

@@ -44,12 +44,13 @@ async fn prepare_test(index: u32) -> (Config, FileStore) {
     let config = Config {
         db_path: format!("{}/test_db.sqlite", &path),
         data_dir: ".".into(),
+        metadata_cache_capacity: 100,
     };
 
     (config, store)
 }
 
-async fn create_hierarchy(manager: &Manager) {
+async fn create_hierarchy(manager: &mut Manager) {
     // Adding the root to the file store.
     manager.create_root().await.unwrap();
 
@@ -110,7 +111,7 @@ async fn basic_manager() {
 
     let manager = Manager::new(config, Box::new(store)).await;
     assert!(manager.is_ok(), "Failed to create a manager");
-    let manager = manager.unwrap();
+    let mut manager = manager.unwrap();
 
     // Adding an object.
     let meta = ResourceMetadata::new(
@@ -178,7 +179,7 @@ async fn rehydrate_single() {
         .await
         .unwrap();
 
-    let manager = Manager::new(config, Box::new(store)).await.unwrap();
+    let mut manager = Manager::new(config, Box::new(store)).await.unwrap();
 
     assert_eq!(manager.has_object(&meta.id()).await.unwrap(), false);
 
@@ -201,7 +202,7 @@ async fn check_constraints() {
         vec![],
     );
 
-    let manager = Manager::new(config, Box::new(store)).await.unwrap();
+    let mut manager = Manager::new(config, Box::new(store)).await.unwrap();
 
     // Fail to store an object where both id and parent are 1
     let res = manager.create(&meta, Some(default_content().await)).await;
@@ -260,9 +261,9 @@ async fn check_constraints() {
 async fn delete_hierarchy() {
     let (config, store) = prepare_test(4).await;
 
-    let manager = Manager::new(config, Box::new(store)).await.unwrap();
+    let mut manager = Manager::new(config, Box::new(store)).await.unwrap();
 
-    create_hierarchy(&manager).await;
+    create_hierarchy(&mut manager).await;
 
     // Delete a single child.
     manager.delete(&12.into()).await.unwrap();
@@ -283,9 +284,9 @@ async fn delete_hierarchy() {
 async fn rehydrate_full() {
     let (config, store) = prepare_test(5).await;
 
-    let manager = Manager::new(config, Box::new(store)).await.unwrap();
+    let mut manager = Manager::new(config, Box::new(store)).await.unwrap();
 
-    create_hierarchy(&manager).await;
+    create_hierarchy(&mut manager).await;
 
     assert_eq!(manager.resource_count().await.unwrap(), 22);
 
@@ -306,9 +307,9 @@ async fn rehydrate_full() {
 async fn get_full_path() {
     let (config, store) = prepare_test(6).await;
 
-    let manager = Manager::new(config, Box::new(store)).await.unwrap();
+    let mut manager = Manager::new(config, Box::new(store)).await.unwrap();
 
-    create_hierarchy(&manager).await;
+    create_hierarchy(&mut manager).await;
 
     let root_path = manager.get_full_path(&ROOT_ID).await.unwrap();
     assert_eq!(root_path.len(), 1);
@@ -326,9 +327,9 @@ async fn get_full_path() {
 async fn search_by_name() {
     let (config, store) = prepare_test(7).await;
 
-    let manager = Manager::new(config, Box::new(store)).await.unwrap();
+    let mut manager = Manager::new(config, Box::new(store)).await.unwrap();
 
-    create_hierarchy(&manager).await;
+    create_hierarchy(&mut manager).await;
 
     let results = manager.by_name("unknown", Some("image/png")).await.unwrap();
     assert_eq!(results.len(), 0);
@@ -352,9 +353,9 @@ async fn search_by_name() {
 async fn search_by_tag() {
     let (config, store) = prepare_test(8).await;
 
-    let manager = Manager::new(config, Box::new(store)).await.unwrap();
+    let mut manager = Manager::new(config, Box::new(store)).await.unwrap();
 
-    create_hierarchy(&manager).await;
+    create_hierarchy(&mut manager).await;
 
     let results = manager.by_tag("no-such-tag").await.unwrap();
     assert_eq!(results.len(), 0);
@@ -368,9 +369,9 @@ async fn search_by_tag() {
 async fn search_by_text() {
     let (config, store) = prepare_test(9).await;
 
-    let manager = Manager::new(config, Box::new(store)).await.unwrap();
+    let mut manager = Manager::new(config, Box::new(store)).await.unwrap();
 
-    create_hierarchy(&manager).await;
+    create_hierarchy(&mut manager).await;
 
     let results = manager.by_text("no-match", None).await.unwrap();
     assert_eq!(results.len(), 0);
@@ -395,7 +396,7 @@ async fn search_by_text() {
 async fn score() {
     let (config, store) = prepare_test(10).await;
 
-    let manager = Manager::new(config, Box::new(store)).await.unwrap();
+    let mut manager = Manager::new(config, Box::new(store)).await.unwrap();
     manager.create_root().await.unwrap();
 
     let mut root_meta = manager.get_metadata(&ROOT_ID).await.unwrap();
@@ -419,9 +420,9 @@ async fn score() {
 async fn top_frecency() {
     let (config, store) = prepare_test(11).await;
 
-    let manager = Manager::new(config, Box::new(store)).await.unwrap();
+    let mut manager = Manager::new(config, Box::new(store)).await.unwrap();
 
-    create_hierarchy(&manager).await;
+    create_hierarchy(&mut manager).await;
 
     let mut root_meta = manager.get_metadata(&ROOT_ID).await.unwrap();
     assert_eq!(root_meta.scorer().frecency(), 0);
@@ -592,7 +593,7 @@ async fn get_root_children() {
 
     let manager = Manager::new(config, Box::new(store)).await;
     assert!(manager.is_ok(), "Failed to create a manager");
-    let manager = manager.unwrap();
+    let mut manager = manager.unwrap();
 
     manager.create_root().await.unwrap();
 
@@ -609,7 +610,7 @@ async fn unique_children_names() {
 
     let manager = Manager::new(config, Box::new(store)).await;
     assert!(manager.is_ok(), "Failed to create a manager");
-    let manager = manager.unwrap();
+    let mut manager = manager.unwrap();
 
     manager.create_root().await.unwrap();
 
@@ -635,7 +636,7 @@ async fn child_by_name() {
 
     let manager = Manager::new(config, Box::new(store)).await;
     assert!(manager.is_ok(), "Failed to create a manager");
-    let manager = manager.unwrap();
+    let mut manager = manager.unwrap();
 
     manager.create_root().await.unwrap();
 
@@ -677,7 +678,7 @@ async fn migration_check() {
     {
         let manager = Manager::new(config.clone(), Box::new(store)).await;
         assert!(manager.is_ok(), "Failed to create first manager");
-        let manager = manager.unwrap();
+        let mut manager = manager.unwrap();
 
         manager.create_root().await.unwrap();
 
@@ -702,7 +703,7 @@ async fn frecency_update() {
 
     let manager = Manager::new(config.clone(), Box::new(store)).await;
     assert!(manager.is_ok(), "Failed to create first manager");
-    let manager = manager.unwrap();
+    let mut manager = manager.unwrap();
 
     manager.create_root().await.unwrap();
 

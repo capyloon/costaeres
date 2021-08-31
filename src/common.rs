@@ -144,7 +144,7 @@ impl VariantContent {
     }
 }
 
-#[derive(Debug, Deserialize, Serialize, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 pub struct ResourceMetadata {
     id: ResourceId,
     parent: ResourceId,
@@ -428,7 +428,7 @@ impl ResourceNameProvider for DefaultResourceNameProvider {
 
 /// A trait to implement in order to transform data stored as it is
 /// read and written.
-pub trait ResourceTransformer: Sync + Send  {
+pub trait ResourceTransformer: Sync + Send {
     /// Creates a wrapper around a reader use to write a resource to storage.
     fn transform_to(&self, source: BoxedReader) -> BoxedReader;
 
