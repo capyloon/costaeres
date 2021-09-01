@@ -58,7 +58,7 @@ async fn create_hierarchy(manager: &mut Manager) {
     manager.create_root().await.unwrap();
 
     // Add a sub-container.
-    let container = ResourceMetadata::new(
+    let mut container = ResourceMetadata::new(
         &1.into(),
         &ROOT_ID,
         ResourceKind::Container,
@@ -67,13 +67,13 @@ async fn create_hierarchy(manager: &mut Manager) {
         vec![],
     );
     manager
-        .create(&container, Some(default_content().await))
+        .create(&mut container, Some(default_content().await))
         .await
         .unwrap();
 
     // Add a few children to the container.
     for i in 5..15 {
-        let child = ResourceMetadata::new(
+        let mut child = ResourceMetadata::new(
             &i.into(),
             &1.into(),
             if i == 10 {
@@ -86,14 +86,14 @@ async fn create_hierarchy(manager: &mut Manager) {
             vec![default_variant()],
         );
         manager
-            .create(&child, Some(default_content().await))
+            .create(&mut child, Some(default_content().await))
             .await
             .unwrap();
     }
 
     // Add a few children to the sub-container #10.
     for i in 25..35 {
-        let child = ResourceMetadata::new(
+        let mut child = ResourceMetadata::new(
             &i.into(),
             &10.into(),
             ResourceKind::Leaf,
@@ -102,7 +102,7 @@ async fn create_hierarchy(manager: &mut Manager) {
             vec![default_variant()],
         );
         manager
-            .create(&child, Some(default_content().await))
+            .create(&mut child, Some(default_content().await))
             .await
             .unwrap();
     }
@@ -117,7 +117,7 @@ async fn basic_manager() {
     let mut manager = manager.unwrap();
 
     // Adding an object.
-    let meta = ResourceMetadata::new(
+    let mut meta = ResourceMetadata::new(
         &ROOT_ID,
         &ROOT_ID,
         ResourceKind::Leaf,
@@ -127,7 +127,7 @@ async fn basic_manager() {
     );
 
     manager
-        .create(&meta, Some(default_content().await))
+        .create(&mut meta, Some(default_content().await))
         .await
         .unwrap();
     // assert_eq!(res, Ok(()));
@@ -140,20 +140,10 @@ async fn basic_manager() {
     assert!(res.is_err());
 
     // Update the root object.
-    let meta = ResourceMetadata::new(
-        &ROOT_ID,
-        &ROOT_ID,
-        ResourceKind::Leaf,
-        "object 0 updated",
-        vec!["one".into(), "two".into(), "three".into()],
-        vec![default_variant()],
-    );
-    let res = manager.update(&meta, Some(default_content().await)).await;
+    let res = manager
+        .update_variant(&ROOT_ID, default_content().await)
+        .await;
     assert_eq!(res, Ok(()));
-
-    // Verify the updated metadata.
-    let res = manager.get_metadata(&meta.id()).await.unwrap();
-    assert_eq!(res, meta);
 
     // Delete the root object
     let res = manager.delete(&ROOT_ID).await;
@@ -169,7 +159,7 @@ async fn rehydrate_single() {
     let (config, store) = prepare_test(2).await;
 
     // Adding an object to the file store
-    let meta = ResourceMetadata::new(
+    let mut meta = ResourceMetadata::new(
         &1.into(),
         &ROOT_ID,
         ResourceKind::Leaf,
@@ -178,7 +168,7 @@ async fn rehydrate_single() {
         vec![default_variant()],
     );
     store
-        .create(&meta, Some(default_content().await))
+        .create(&mut meta, Some(default_content().await))
         .await
         .unwrap();
 
@@ -196,7 +186,7 @@ async fn rehydrate_single() {
 async fn check_constraints() {
     let (config, store) = prepare_test(3).await;
 
-    let meta = ResourceMetadata::new(
+    let mut meta = ResourceMetadata::new(
         &1.into(),
         &1.into(),
         ResourceKind::Leaf,
@@ -208,11 +198,13 @@ async fn check_constraints() {
     let mut manager = Manager::new(config, Box::new(store)).await.unwrap();
 
     // Fail to store an object where both id and parent are 1
-    let res = manager.create(&meta, Some(default_content().await)).await;
+    let res = manager
+        .create(&mut meta, Some(default_content().await))
+        .await;
     assert_eq!(res, Err(ResourceStoreError::InvalidContainerId));
 
     // Fail to store an object if the parent doesn't exist.
-    let leaf_meta = ResourceMetadata::new(
+    let mut leaf_meta = ResourceMetadata::new(
         &1.into(),
         &ROOT_ID,
         ResourceKind::Leaf,
@@ -221,12 +213,12 @@ async fn check_constraints() {
         vec![default_variant()],
     );
     let res = manager
-        .create(&leaf_meta, Some(default_content().await))
+        .create(&mut leaf_meta, Some(default_content().await))
         .await;
     assert_eq!(res, Err(ResourceStoreError::InvalidContainerId));
 
     // Create the root
-    let root_meta = ResourceMetadata::new(
+    let mut root_meta = ResourceMetadata::new(
         &ROOT_ID,
         &ROOT_ID,
         ResourceKind::Container,
@@ -235,18 +227,18 @@ async fn check_constraints() {
         vec![default_variant()],
     );
     manager
-        .create(&root_meta, Some(default_content().await))
+        .create(&mut root_meta, Some(default_content().await))
         .await
         .unwrap();
 
     // And now add the leaf.
     manager
-        .create(&leaf_meta, Some(default_content().await))
+        .create(&mut leaf_meta, Some(default_content().await))
         .await
         .unwrap();
 
     // Try to update the leaf to a non-existent parent.
-    let leaf_meta = ResourceMetadata::new(
+    let mut leaf_meta = ResourceMetadata::new(
         &1.into(),
         &2.into(),
         ResourceKind::Leaf,
@@ -255,7 +247,7 @@ async fn check_constraints() {
         vec![default_variant()],
     );
     let res = manager
-        .create(&leaf_meta, Some(default_content().await))
+        .create(&mut leaf_meta, Some(default_content().await))
         .await;
     assert_eq!(res, Err(ResourceStoreError::InvalidContainerId));
 }
@@ -402,12 +394,18 @@ async fn score() {
     let mut manager = Manager::new(config, Box::new(store)).await.unwrap();
     manager.create_root().await.unwrap();
 
-    let mut root_meta = manager.get_metadata(&ROOT_ID).await.unwrap();
+    let root_meta = manager.get_metadata(&ROOT_ID).await.unwrap();
     assert_eq!(root_meta.scorer().frecency(), 0);
 
     // Update the score
-    root_meta.update_scorer(&VisitEntry::new(&Utc::now(), VisitPriority::Normal));
-    manager.update(&root_meta, None).await.unwrap();
+    manager
+        .visit(
+            &ROOT_ID,
+            &VisitEntry::new(&Utc::now(), VisitPriority::Normal),
+        )
+        .await
+        .unwrap();
+    let root_meta = manager.get_metadata(&ROOT_ID).await.unwrap();
     let initial_score = root_meta.scorer().frecency();
     assert_eq!(initial_score, 100);
 
@@ -427,12 +425,18 @@ async fn top_frecency() {
 
     create_hierarchy(&mut manager).await;
 
-    let mut root_meta = manager.get_metadata(&ROOT_ID).await.unwrap();
+    let root_meta = manager.get_metadata(&ROOT_ID).await.unwrap();
     assert_eq!(root_meta.scorer().frecency(), 0);
 
     // Update the score
-    root_meta.update_scorer(&VisitEntry::new(&Utc::now(), VisitPriority::Normal));
-    manager.update(&root_meta, None).await.unwrap();
+    manager
+        .visit(
+            &ROOT_ID,
+            &VisitEntry::new(&Utc::now(), VisitPriority::Normal),
+        )
+        .await
+        .unwrap();
+    let root_meta = manager.get_metadata(&ROOT_ID).await.unwrap();
     assert_eq!(root_meta.scorer().frecency(), 100);
 
     let results = manager.top_by_frecency(10).await.unwrap();
@@ -448,13 +452,13 @@ async fn index_places() {
     manager.add_indexer(Box::new(create_places_indexer()));
 
     manager.create_root().await.unwrap();
-    let leaf_meta = ResourceMetadata::new(
+    let mut leaf_meta = ResourceMetadata::new(
         &1.into(),
         &ROOT_ID,
         ResourceKind::Leaf,
         "ecdf525a-e5d6-11eb-9c9b-d3fd1d0ea335",
         vec!["places".into()],
-        vec![default_variant()],
+        vec![],
     );
 
     let places1 = fs::File::open("./test-fixtures/places-1.json")
@@ -463,7 +467,7 @@ async fn index_places() {
 
     manager
         .create(
-            &leaf_meta,
+            &mut leaf_meta,
             Some(VariantContent::new(
                 named_variant("default", "application/x-places+json"),
                 Box::new(places1),
@@ -488,12 +492,12 @@ async fn index_places() {
         .await
         .unwrap();
     manager
-        .update(
-            &leaf_meta,
-            Some(VariantContent::new(
+        .update_variant(
+            &leaf_meta.id(),
+            VariantContent::new(
                 named_variant("default", "application/x-places+json"),
                 Box::new(places2),
-            )),
+            ),
         )
         .await
         .unwrap();
@@ -536,7 +540,7 @@ async fn index_contacts() {
     manager.add_indexer(Box::new(create_contacts_indexer()));
 
     manager.create_root().await.unwrap();
-    let leaf_meta = ResourceMetadata::new(
+    let mut leaf_meta = ResourceMetadata::new(
         &1.into(),
         &ROOT_ID,
         ResourceKind::Leaf,
@@ -551,7 +555,7 @@ async fn index_contacts() {
 
     manager
         .create(
-            &leaf_meta,
+            &mut leaf_meta,
             Some(VariantContent::new(
                 named_variant("default", "application/x-contact+json"),
                 Box::new(contacts),
@@ -617,7 +621,7 @@ async fn unique_children_names() {
 
     manager.create_root().await.unwrap();
 
-    let leaf_meta = ResourceMetadata::new(
+    let mut leaf_meta = ResourceMetadata::new(
         &1.into(),
         &ROOT_ID,
         ResourceKind::Leaf,
@@ -626,9 +630,9 @@ async fn unique_children_names() {
         vec![],
     );
 
-    manager.create(&leaf_meta, None).await.unwrap();
+    manager.create(&mut leaf_meta, None).await.unwrap();
 
-    let res = manager.create(&leaf_meta, None).await;
+    let res = manager.create(&mut leaf_meta, None).await;
     assert!(res.is_err());
 }
 
@@ -643,7 +647,7 @@ async fn child_by_name() {
 
     manager.create_root().await.unwrap();
 
-    let leaf_meta = ResourceMetadata::new(
+    let mut leaf_meta = ResourceMetadata::new(
         &1.into(),
         &ROOT_ID,
         ResourceKind::Leaf,
@@ -652,9 +656,9 @@ async fn child_by_name() {
         vec![],
     );
 
-    manager.create(&leaf_meta, None).await.unwrap();
+    manager.create(&mut leaf_meta, None).await.unwrap();
 
-    let leaf_meta = ResourceMetadata::new(
+    let mut leaf_meta = ResourceMetadata::new(
         &2.into(),
         &ROOT_ID,
         ResourceKind::Leaf,
@@ -663,7 +667,7 @@ async fn child_by_name() {
         vec![],
     );
 
-    manager.create(&leaf_meta, None).await.unwrap();
+    manager.create(&mut leaf_meta, None).await.unwrap();
 
     let file = manager.child_by_name(&ROOT_ID, "file.txt").await.unwrap();
     assert_eq!(file.name(), "file.txt");
@@ -710,11 +714,11 @@ async fn frecency_update() {
 
     manager.create_root().await.unwrap();
 
-    let mut meta = manager.get_metadata(&ROOT_ID).await.unwrap();
+    let meta = manager.get_metadata(&ROOT_ID).await.unwrap();
     assert_eq!(meta.scorer().frecency(), 0);
 
     manager
-        .visit(&mut meta, &VisitEntry::now(VisitPriority::Normal))
+        .visit(&meta.id(), &VisitEntry::now(VisitPriority::Normal))
         .await
         .unwrap();
     let meta = manager.get_metadata(&ROOT_ID).await.unwrap();

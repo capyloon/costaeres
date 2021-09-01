@@ -112,26 +112,34 @@ impl Manager {
         self.cache.put(metadata.id(), (*metadata).clone());
     }
 
-    /// Update the frecency for that metadata.
+    /// Update the frecency for that resource.
     pub async fn visit(
         &mut self,
-        metadata: &mut ResourceMetadata,
+        id: &ResourceId,
         visit: &VisitEntry,
     ) -> Result<(), ResourceStoreError> {
+        let mut metadata = self.get_metadata(id).await?;
+        metadata.modify_now();
+
+        self.evict_from_cache(id);
         metadata.update_scorer(visit);
 
-        let id = metadata.id();
         let scorer = metadata.db_scorer();
+        let modified = metadata.modified();
         // We only need to update the scorer, so not doing a full update here.
         sqlx::query!(
-            "UPDATE OR REPLACE resources SET scorer = ? WHERE id = ?",
+            "UPDATE OR REPLACE resources SET scorer = ?, modified = ? WHERE id = ?",
             scorer,
+            modified,
             id
         )
         .execute(&self.db_pool)
         .await?;
 
-        self.evict_from_cache(&id);
+        // Update the metadata in the store.
+        self.store.update(&metadata, None).await?;
+
+        self.update_cache(&metadata);
 
         Ok(())
     }
@@ -317,7 +325,7 @@ impl Manager {
     }
 
     pub async fn create_root(&mut self) -> Result<(), ResourceStoreError> {
-        let root = ResourceMetadata::new(
+        let mut root = ResourceMetadata::new(
             &ROOT_ID,
             &ROOT_ID,
             ResourceKind::Container,
@@ -325,7 +333,7 @@ impl Manager {
             vec![],
             vec![Variant::new("default", "inode/directory", 0)],
         );
-        self.create(&root, None).await
+        self.create(&mut root, None).await
     }
 
     pub async fn get_root(
@@ -505,11 +513,15 @@ impl Manager {
 
     pub async fn create(
         &mut self,
-        metadata: &ResourceMetadata,
+        metadata: &mut ResourceMetadata,
         mut content: Option<VariantContent>,
     ) -> Result<(), ResourceStoreError> {
         self.check_container_leaf(&metadata.id(), &metadata.parent())
             .await?;
+
+        if let Some(content) = &content {
+            metadata.add_variant(content.0.clone());
+        }
 
         // Start a transaction to store the new metadata.
         let tx = self.db_pool.begin().await?;
@@ -538,21 +550,23 @@ impl Manager {
         }
     }
 
-    pub async fn update(
+    // Add or replace a variant for this resource.
+    pub async fn update_variant(
         &mut self,
-        metadata: &ResourceMetadata,
-        mut content: Option<VariantContent>,
+        id: &ResourceId,
+        content: VariantContent,
     ) -> Result<(), ResourceStoreError> {
-        self.check_container_leaf(&metadata.id(), &metadata.parent())
-            .await?;
+        let mut metadata = self.get_metadata(id).await?;
+
+        metadata.add_variant(content.0.clone());
+        metadata.modify_now();
 
         let mut tx = self.db_pool.begin().await?;
-        let id = metadata.id();
         sqlx::query!("DELETE FROM resources WHERE id = ?", id)
             .execute(&mut tx)
             .await?;
 
-        let mut tx2 = self.create_metadata(metadata, tx).await?;
+        let mut tx2 = self.create_metadata(&metadata, tx).await?;
 
         // Update the children content of the parent if this is not creating the root.
         if !metadata.id().is_root() {
@@ -560,15 +574,24 @@ impl Manager {
                 .await?;
         }
 
-        // If there is content, run the text indexer for this mime type.
-        let tx3 = if let Some(ref mut content) = content {
-            self.update_text_index(metadata, content, tx2).await?
-        } else {
-            tx2
-        };
-
-        match self.store.update(metadata, content).await {
+        match self.store.update(&metadata, Some(content)).await {
             Ok(_) => {
+                log::info!("Updating fts for {:?}", metadata);
+                let mut tx3 = tx2;
+                // Re-index all variants since the `DELETE` sql triggers full deletion of the ftx index.
+                for variant in metadata.variants() {
+                    let content = self
+                        .store
+                        .get_variant(&metadata.id(), &variant.name())
+                        .await?;
+                    tx3 = self
+                        .update_text_index(
+                            &metadata,
+                            &mut VariantContent::new(variant.clone(), content),
+                            tx3,
+                        )
+                        .await?;
+                }
                 tx3.commit().await?;
                 Ok(())
             }

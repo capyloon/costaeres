@@ -43,7 +43,7 @@ impl Indexer for FlatJsonIndexer {
         fts: &Fts,
         mut tx: Transaction<'c, Sqlite>,
     ) -> TransactionResult<'c> {
-        // 0. Filer by mime type.
+        // 0. Filter by mime type.
         if self.mime_type != variant.0.mime_type() {
             return Ok(tx);
         }
