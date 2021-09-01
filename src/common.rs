@@ -241,6 +241,10 @@ impl ResourceMetadata {
         self.modified = date;
     }
 
+    pub fn modify_now(&mut self) {
+        self.modified = Utc::now();
+    }
+
     pub fn tags(&self) -> &Vec<String> {
         &self.tags
     }
@@ -426,7 +430,7 @@ impl ResourceNameProvider for DefaultResourceNameProvider {
     }
 
     fn variant_name(&self, id: &ResourceId, variant: &str) -> String {
-        format!("{}.{}.content", id, variant)
+        format!("{}.variant.{}", id, variant)
     }
 }
 
