@@ -481,7 +481,7 @@ impl Manager {
     pub async fn update_text_index<'c>(
         &'c self,
         metadata: &'c ResourceMetadata,
-        content: &mut BoxedReader,
+        content: &mut VariantContent,
         mut tx: Transaction<'c, Sqlite>,
     ) -> TransactionResult<'c> {
         if metadata.kind() == ResourceKind::Container {
@@ -523,8 +523,7 @@ impl Manager {
 
         // If there is content run the text indexer for this mime type.
         let tx3 = if let Some(ref mut content) = content {
-            self.update_text_index(metadata, &mut content.1, tx2)
-                .await?
+            self.update_text_index(metadata, content, tx2).await?
         } else {
             tx2
         };
@@ -563,8 +562,7 @@ impl Manager {
 
         // If there is content, run the text indexer for this mime type.
         let tx3 = if let Some(ref mut content) = content {
-            self.update_text_index(metadata, &mut content.1, tx2)
-                .await?
+            self.update_text_index(metadata, content, tx2).await?
         } else {
             tx2
         };

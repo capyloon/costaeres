@@ -1,5 +1,5 @@
 /// Indexers for recognized mime types.
-use crate::common::{BoxedReader, ResourceMetadata, TransactionResult};
+use crate::common::{ResourceMetadata, TransactionResult, VariantContent};
 use crate::fts::Fts;
 use async_std::io::{ReadExt, SeekFrom};
 use async_trait::async_trait;
@@ -12,7 +12,7 @@ pub trait Indexer {
     async fn index<'c>(
         &self,
         meta: &ResourceMetadata,
-        content: &mut BoxedReader,
+        variant: &mut VariantContent,
         fts: &Fts,
         mut tx: Transaction<'c, Sqlite>,
     ) -> TransactionResult<'c>;
@@ -22,14 +22,14 @@ pub trait Indexer {
 // Indexed properties are strings and string arrays members.
 pub struct FlatJsonIndexer {
     fields: Vec<String>,
-    tag: String,
+    mime_type: String,
 }
 
 impl FlatJsonIndexer {
-    pub fn new(tag: &str, fields: &[&str]) -> Self {
+    pub fn new(mime_type: &str, fields: &[&str]) -> Self {
         Self {
             fields: fields.iter().cloned().map(|e| e.to_owned()).collect(),
-            tag: tag.into(),
+            mime_type: mime_type.into(),
         }
     }
 }
@@ -39,14 +39,16 @@ impl Indexer for FlatJsonIndexer {
     async fn index<'c>(
         &self,
         meta: &ResourceMetadata,
-        content: &mut BoxedReader,
+        variant: &mut VariantContent,
         fts: &Fts,
         mut tx: Transaction<'c, Sqlite>,
     ) -> TransactionResult<'c> {
         // 0. Filer by mime type.
-        if !meta.has_tag(&self.tag) {
+        if self.mime_type != variant.0.mime_type() {
             return Ok(tx);
         }
+
+        let content = &mut variant.1;
 
         // 1. Read the content as json.
         content.seek(SeekFrom::Start(0)).await?;
@@ -81,14 +83,14 @@ impl Indexer for FlatJsonIndexer {
 // This is a json value with the following format:
 // { url: "...", title: "...", icon: "..." }
 pub fn create_places_indexer() -> FlatJsonIndexer {
-    FlatJsonIndexer::new("places", &["url", "title"])
+    FlatJsonIndexer::new("application/x-places+json", &["url", "title"])
 }
 
 // Indexer for the content of a "Contacts" object.
 // This is a json value with the following format:
 // { name: "...", phone: "[...]", email: "[...]" }
 pub fn create_contacts_indexer() -> FlatJsonIndexer {
-    FlatJsonIndexer::new("contact", &["name", "phone", "email"])
+    FlatJsonIndexer::new("application/x-contact+json", &["name", "phone", "email"])
 }
 
 // Indexer for the content of a "Media" object.
@@ -102,5 +104,5 @@ pub fn create_contacts_indexer() -> FlatJsonIndexer {
 //              "src":"https://lh3.googleusercontent.com/p2_pHFA7u4uxGvEYoKvhiyxLDUCxPxJCMwRQLVMAMs4FF5lxb0hcVAa6iJY4UvMjrSiAwM6HiqXzyy4=w128-h128-l90-rj",
 //              "type":"image/jpeg"}]}
 pub fn create_media_indexer() -> FlatJsonIndexer {
-    FlatJsonIndexer::new("media", &["title", "album", "artist"])
+    FlatJsonIndexer::new("application/x-media+json", &["title", "album", "artist"])
 }

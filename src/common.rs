@@ -203,17 +203,21 @@ impl ResourceMetadata {
         self.name.clone()
     }
 
-    // Returns a bincode representation of the score, to store in the DB.
-    pub fn db_scorer(&self) -> Vec<u8> {
-        self.scorer.as_bincode()
-    }
-
     pub fn scorer(&self) -> &Scorer {
         &self.scorer
     }
 
+    pub fn set_scorer(&mut self, scorer: &Scorer) {
+        self.scorer = scorer.clone();
+    }
+
     pub fn update_scorer(&mut self, entry: &VisitEntry) {
         self.scorer.add(entry);
+    }
+
+    // Returns a bincode representation of the score, suitable to store in the DB.
+    pub fn db_scorer(&self) -> Vec<u8> {
+        self.scorer.as_bincode()
     }
 
     // Set the scorer using the db serialized representation.

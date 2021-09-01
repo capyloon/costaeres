@@ -7,17 +7,20 @@ use costaeres::indexer::*;
 use costaeres::manager::*;
 use costaeres::scorer::{VisitEntry, VisitPriority};
 
-fn named_variant(name: &str) -> Variant {
-    Variant::new(name, "application/octet-stream", 42)
+fn named_variant(name: &str, mime_type: &str) -> Variant {
+    Variant::new(name, mime_type, 42)
 }
 
 fn default_variant() -> Variant {
-    named_variant("default")
+    named_variant("default", "application/octet-stream")
 }
 
 async fn named_content(name: &str) -> VariantContent {
     let file = fs::File::open("./create_db.sh").await.unwrap();
-    VariantContent::new(named_variant(name), Box::new(file))
+    VariantContent::new(
+        named_variant(name, "application/octet-stream"),
+        Box::new(file),
+    )
 }
 
 async fn default_content() -> VariantContent {
@@ -462,7 +465,7 @@ async fn index_places() {
         .create(
             &leaf_meta,
             Some(VariantContent::new(
-                named_variant("default"),
+                named_variant("default", "application/x-places+json"),
                 Box::new(places1),
             )),
         )
@@ -488,7 +491,7 @@ async fn index_places() {
         .update(
             &leaf_meta,
             Some(VariantContent::new(
-                named_variant("default"),
+                named_variant("default", "application/x-places+json"),
                 Box::new(places2),
             )),
         )
@@ -550,7 +553,7 @@ async fn index_contacts() {
         .create(
             &leaf_meta,
             Some(VariantContent::new(
-                named_variant("default"),
+                named_variant("default", "application/x-contact+json"),
                 Box::new(contacts),
             )),
         )
