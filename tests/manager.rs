@@ -724,3 +724,40 @@ async fn frecency_update() {
     let meta = manager.get_metadata(&ROOT_ID).await.unwrap();
     assert_eq!(meta.scorer().frecency(), 100);
 }
+
+#[async_std::test]
+async fn index_places_mdn() {
+    let (config, store) = prepare_test(19).await;
+
+    let mut manager = Manager::new(config, Box::new(store)).await.unwrap();
+    manager.add_indexer(Box::new(create_places_indexer()));
+
+    manager.create_root().await.unwrap();
+    let mut leaf_meta = ResourceMetadata::new(
+        &1.into(),
+        &ROOT_ID,
+        ResourceKind::Leaf,
+        "ecdf525a-e5d6-11eb-9c9b-d3fd1d0ea335",
+        vec!["places".into()],
+        vec![],
+    );
+
+    let places1 = fs::File::open("./test-fixtures/places-mdn.json")
+        .await
+        .unwrap();
+
+    manager
+        .create(
+            &mut leaf_meta,
+            Some(VariantContent::new(
+                named_variant("default", "application/x-places+json"),
+                Box::new(places1),
+            )),
+        )
+        .await
+        .unwrap();
+
+    // Found in the url.
+    let results = manager.by_text("mdn", Some("places".into())).await.unwrap();
+    assert_eq!(results.len(), 1);
+}
