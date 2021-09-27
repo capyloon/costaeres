@@ -878,7 +878,7 @@ impl Manager {
                 final_name = std::borrow::Cow::from(new_name);
             }
 
-            let variant = Variant::new(&final_name, &mime_type, fs_meta.len() as _);
+            let variant = Variant::new("default", &mime_type, fs_meta.len() as _);
             let mut meta = ResourceMetadata::new(
                 &ResourceId::new(),
                 parent,
