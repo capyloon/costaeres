@@ -68,16 +68,16 @@ impl Fts {
         for chunk in to_insert.chunks(10) {
             let empty = &String::new();
             let mut iter = chunk.iter();
-            let chunk0 = iter.next().unwrap_or_else(|| empty);
-            let chunk1 = iter.next().unwrap_or_else(|| empty);
-            let chunk2 = iter.next().unwrap_or_else(|| empty);
-            let chunk3 = iter.next().unwrap_or_else(|| empty);
-            let chunk4 = iter.next().unwrap_or_else(|| empty);
-            let chunk5 = iter.next().unwrap_or_else(|| empty);
-            let chunk6 = iter.next().unwrap_or_else(|| empty);
-            let chunk7 = iter.next().unwrap_or_else(|| empty);
-            let chunk8 = iter.next().unwrap_or_else(|| empty);
-            let chunk9 = iter.next().unwrap_or_else(|| empty);
+            let chunk0 = iter.next().unwrap_or(empty);
+            let chunk1 = iter.next().unwrap_or(empty);
+            let chunk2 = iter.next().unwrap_or(empty);
+            let chunk3 = iter.next().unwrap_or(empty);
+            let chunk4 = iter.next().unwrap_or(empty);
+            let chunk5 = iter.next().unwrap_or(empty);
+            let chunk6 = iter.next().unwrap_or(empty);
+            let chunk7 = iter.next().unwrap_or(empty);
+            let chunk8 = iter.next().unwrap_or(empty);
+            let chunk9 = iter.next().unwrap_or(empty);
 
             sqlx::query!(
                 "INSERT OR IGNORE INTO fts ( id, ngram0, ngram1, ngram2, ngram3, ngram4, ngram5, ngram6, ngram7, ngram8, ngram9 )

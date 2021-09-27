@@ -761,3 +761,44 @@ async fn index_places_mdn() {
     let results = manager.by_text("mdn", Some("places".into())).await.unwrap();
     assert_eq!(results.len(), 1);
 }
+
+#[async_std::test]
+async fn import_from_path() {
+    let (config, store) = prepare_test(20).await;
+
+    let mut manager = Manager::new(config, Box::new(store)).await.unwrap();
+
+    manager.create_root().await.unwrap();
+
+    // Wrong file.
+    let meta = manager
+        .import_from_path(&ROOT_ID, "./test-fixtures/unknown.txt", false)
+        .await;
+    assert_eq!(
+        meta,
+        Err(ResourceStoreError::Io(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            "No such file or directory"
+        )))
+    );
+
+    // Correct file
+    let meta = manager
+        .import_from_path(&ROOT_ID, "./test-fixtures/import.txt", false)
+        .await
+        .unwrap();
+    assert_eq!(meta.name(), "import.txt".to_owned());
+
+    // Wrong parent.
+    let meta = manager
+        .import_from_path(&meta.id(), "./test-fixtures/import.txt", false)
+        .await;
+    assert_eq!(meta, Err(ResourceStoreError::InvalidContainerId));
+
+    // Duplicate name -> renaming resource.
+    let meta = manager
+        .import_from_path(&ROOT_ID, "./test-fixtures/import.txt", false)
+        .await
+        .unwrap();
+    assert_eq!(meta.name(), "import(1).txt".to_owned());
+}

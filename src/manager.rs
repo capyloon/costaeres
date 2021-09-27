@@ -25,6 +25,7 @@ use crate::indexer::Indexer;
 use crate::scorer::sqlite_frecency;
 use crate::scorer::VisitEntry;
 use crate::timer::Timer;
+use async_std::path::Path;
 use bincode::Options;
 use chrono::{DateTime, Utc};
 use libsqlite3_sys::{
@@ -825,5 +826,81 @@ impl Manager {
             // No children for this container.
             Ok((meta, vec![]))
         }
+    }
+
+    /// Imports an existing file from a given path, storing it as the default variant for this resource.
+    pub async fn import_from_path<P: AsRef<Path>>(
+        &mut self,
+        parent: &ResourceId,
+        path: P,
+        delete_file: bool,
+    ) -> Result<ResourceMetadata, ResourceStoreError> {
+        use async_std::fs::File;
+
+        if !self.is_container(parent).await? {
+            return Err(ResourceStoreError::InvalidContainerId);
+        }
+        let file = File::open(&path).await?;
+        let fs_meta = file.metadata().await?;
+
+        let mime_type = mime_guess::from_path(&*path.as_ref().to_string_lossy())
+            .first_or_octet_stream()
+            .essence_str()
+            .to_owned();
+        if let Some(name) = path.as_ref().file_name() {
+            let name = name.to_string_lossy();
+
+            // Create a unique name, adding `(N)` if needed.
+            let mut suffix = 0;
+            let mut final_name = name.clone();
+            loop {
+                let name_ok = self.child_by_name(parent, &final_name).await
+                    == Err(ResourceStoreError::NoSuchResource);
+                if name_ok {
+                    break;
+                }
+                let aname = format!("{}", name);
+                let ppath = Path::new(&aname);
+                suffix += 1;
+                let ext = match ppath.extension() {
+                    Some(ext) => format!(".{}", ext.to_string_lossy()),
+                    None => String::new(),
+                };
+                let new_name = format!(
+                    "{}({}){}",
+                    ppath
+                        .file_stem()
+                        .unwrap_or_else(|| std::ffi::OsStr::new("_"))
+                        .to_string_lossy(),
+                    suffix,
+                    ext
+                );
+                final_name = std::borrow::Cow::from(new_name);
+            }
+
+            let variant = Variant::new(&final_name, &mime_type, fs_meta.len() as _);
+            let mut meta = ResourceMetadata::new(
+                &ResourceId::new(),
+                parent,
+                ResourceKind::Leaf,
+                &final_name,
+                vec![],
+                vec![variant.clone()],
+            );
+
+            self.create(
+                &mut meta,
+                Some(VariantContent::new(variant, Box::new(file))),
+            )
+            .await?;
+
+            if delete_file {
+                async_std::fs::remove_file(path).await?;
+            }
+
+            return Ok(meta);
+        }
+
+        Err(ResourceStoreError::Custom("InvalidFileName".to_owned()))
     }
 }
