@@ -802,3 +802,15 @@ async fn import_from_path() {
         .unwrap();
     assert_eq!(meta.name(), "import(1).txt".to_owned());
 }
+
+#[async_std::test]
+async fn container_size() {
+    let (config, store) = prepare_test(21).await;
+
+    let mut manager = Manager::new(config, Box::new(store)).await.unwrap();
+
+    create_hierarchy(&mut manager).await;
+
+    let size = manager.container_size(&ROOT_ID).await.unwrap();
+    assert_eq!(size, 798);
+}

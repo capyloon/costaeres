@@ -903,4 +903,33 @@ impl Manager {
 
         Err(ResourceStoreError::Custom("InvalidFileName".to_owned()))
     }
+
+    /// Returns the size of all the resources attached to this container.
+    pub async fn container_size(&mut self, id: &ResourceId) -> Result<usize, ResourceStoreError> {
+        let mut current_size = 0;
+
+        let mut containers = vec![id.clone()];
+
+        loop {
+            let id = containers.pop().unwrap();
+
+            let container = self.get_container(&id).await?;
+            for child in container.1 {
+                if child.kind() == ResourceKind::Leaf {
+                    for variant in child.variants() {
+                        current_size += variant.size() as usize;
+                    }
+                } else {
+                    // Add the id to the set of containers to visit.
+                    containers.push(child.id());
+                }
+            }
+
+            if containers.is_empty() {
+                break;
+            }
+        }
+
+        Ok(current_size)
+    }
 }
