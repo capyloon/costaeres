@@ -60,12 +60,12 @@ impl Indexer for FlatJsonIndexer {
         for field in &self.fields {
             match v.get(field) {
                 Some(Value::String(text)) => {
-                    tx = fts.add_text(meta.id(), text, tx).await?;
+                    tx = fts.add_text(&meta.id(), text, tx).await?;
                 }
                 Some(Value::Array(array)) => {
                     for item in array {
                         if let Value::String(text) = item {
-                            tx = fts.add_text(meta.id(), text, tx).await?;
+                            tx = fts.add_text(&meta.id(), text, tx).await?;
                         }
                     }
                 }

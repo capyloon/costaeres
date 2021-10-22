@@ -38,19 +38,41 @@ use sqlx::{
     sqlite::{SqliteConnectOptions, SqlitePoolOptions},
     Sqlite, SqlitePool, Transaction,
 };
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::ffi::CString;
 use std::str::FromStr;
 
-pub struct Manager {
+#[derive(Clone, Debug)]
+pub enum ModificationKind {
+    Created,
+    Modified,
+    Deleted,
+}
+
+#[derive(Debug)]
+pub struct ResourceModification {
+    pub kind: ModificationKind,
+    pub id: ResourceId,
+}
+
+pub trait ModificationObserver {
+    type Inner;
+
+    fn modified(&mut self, modification: &ResourceModification);
+    fn get_inner<'a>(&'a mut self) -> &'a mut Self::Inner;
+}
+
+pub struct Manager<T> {
     db_pool: SqlitePool,
     store: Box<dyn ResourceStore + Send + Sync>,
     fts: Fts,
     indexers: Vec<Box<dyn Indexer + Send + Sync>>, // The list of indexers available.
     cache: LruCache<ResourceId, ResourceMetadata>, // Cache frequently accessed metadata.
+    observers: HashMap<usize, Box<dyn ModificationObserver<Inner = T>>>,
+    current_observer: usize,
 }
 
-impl Manager {
+impl<T> Manager<T> {
     pub async fn new(
         config: Config,
         store: Box<dyn ResourceStore + Send + Sync>,
@@ -102,7 +124,46 @@ impl Manager {
             fts,
             indexers: Vec::new(),
             cache: LruCache::new(config.metadata_cache_capacity),
+            observers: HashMap::new(),
+            current_observer: 0,
         })
+    }
+
+    pub fn add_observer(&mut self, observer: Box<dyn ModificationObserver<Inner = T>>) -> usize {
+        self.current_observer += 1;
+        self.observers.insert(self.current_observer, observer);
+        self.current_observer
+    }
+
+    pub fn remove_observer(&mut self, observer_id: usize) {
+        let _ = self.observers.remove(&observer_id);
+    }
+
+    pub fn with_observer(
+        &mut self,
+        id: usize,
+        closure: &mut dyn FnMut(&mut Box<dyn ModificationObserver<Inner = T>>),
+    ) {
+        if let Some(observer) = self.observers.get_mut(&id) {
+            closure(observer);
+        } else {
+            debug!("with_observer called with unknown observer id: {}", id);
+        }
+    }
+
+    pub fn observer_count(&self) -> usize {
+        self.observers.len()
+    }
+
+    fn notify_observers(&mut self, id: &ResourceId, kind: ModificationKind) {
+        let change = ResourceModification {
+            id: id.clone(),
+            kind,
+        };
+
+        for observer in self.observers.values_mut() {
+            observer.modified(&change);
+        }
     }
 
     fn evict_from_cache(&mut self, id: &ResourceId) {
@@ -199,7 +260,7 @@ impl Manager {
         }
 
         // Insert the full text search data.
-        let tx2 = self.fts.add_text(id, &name, tx).await?;
+        let tx2 = self.fts.add_text(&id, &name, tx).await?;
 
         self.update_cache(metadata);
 
@@ -315,13 +376,14 @@ impl Manager {
         Err(ResourceStoreError::NoSuchResource)
     }
 
-    pub async fn clear(&self) -> Result<(), ResourceStoreError> {
+    pub async fn clear(&mut self) -> Result<(), ResourceStoreError> {
         let mut tx = self.db_pool.begin().await?;
         sqlx::query!("DELETE FROM resources")
             .execute(&mut tx)
             .await?;
         tx.commit().await?;
 
+        self.notify_observers(&ROOT_ID, ModificationKind::Deleted);
         Ok(())
     }
 
@@ -545,6 +607,11 @@ impl Manager {
         match self.store.create(metadata, content).await {
             Ok(_) => {
                 tx3.commit().await?;
+                // Trigger observers once we have committed all changes.
+                self.notify_observers(&metadata.id(), ModificationKind::Created);
+                if !metadata.id().is_root() {
+                    self.notify_observers(&metadata.parent(), ModificationKind::Modified);
+                }
                 Ok(())
             }
             Err(err) => Err(err),
@@ -594,6 +661,11 @@ impl Manager {
                         .await?;
                 }
                 tx3.commit().await?;
+
+                if !metadata.id().is_root() {
+                    self.notify_observers(&metadata.parent(), ModificationKind::Modified);
+                }
+                self.notify_observers(&metadata.id(), ModificationKind::Modified);
                 Ok(())
             }
             Err(err) => Err(err),
@@ -627,7 +699,7 @@ impl Manager {
 
         // 4. Perform an update with no variant to keep the metadata up to date.
         self.store.update(&metadata, None).await?;
-
+        self.notify_observers(&metadata.id(), ModificationKind::Modified);
         Ok(())
     }
 
@@ -645,8 +717,11 @@ impl Manager {
 
         if !is_container {
             self.store.delete(id).await?;
+
             self.update_container_content(&parent_id, &mut tx).await?;
             tx.commit().await?;
+            self.notify_observers(id, ModificationKind::Deleted);
+            self.notify_observers(&parent_id, ModificationKind::Modified);
             self.evict_from_cache(id);
             return Ok(());
         }
@@ -691,12 +766,15 @@ impl Manager {
                 .execute(&mut tx)
                 .await?;
             self.store.delete(&child).await?;
+            self.notify_observers(&child, ModificationKind::Deleted);
             self.evict_from_cache(&child);
         }
 
         self.store.delete(id).await?;
         self.update_container_content(&parent_id, &mut tx).await?;
         tx.commit().await?;
+        self.notify_observers(id, ModificationKind::Deleted);
+        self.notify_observers(&parent_id, ModificationKind::Modified);
 
         self.evict_from_cache(id);
         Ok(())

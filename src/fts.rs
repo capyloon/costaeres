@@ -24,12 +24,14 @@ impl Fts {
 
     pub async fn add_text<'c>(
         &self,
-        id: ResourceId,
+        id: &ResourceId,
         text: &str,
         mut tx: Transaction<'c, Sqlite>,
     ) -> TransactionResult<'c> {
         let ngrams = ngrams(text, self.max_substring_len);
         let _timer = Timer::start(&format!("Fts::add_text {} ngrams", ngrams.len()));
+
+        let id = id.clone();
 
         let mut knowns: HashSet<String> = HashSet::new();
         sqlx::query!(

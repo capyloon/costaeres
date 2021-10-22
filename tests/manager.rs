@@ -6,6 +6,7 @@ use costaeres::file_store::FileStore;
 use costaeres::indexer::*;
 use costaeres::manager::*;
 use costaeres::scorer::{VisitEntry, VisitPriority};
+use std::rc::Rc;
 
 fn named_variant(name: &str, mime_type: &str) -> Variant {
     Variant::new(name, mime_type, 42)
@@ -53,7 +54,7 @@ async fn prepare_test(index: u32) -> (Config, FileStore) {
     (config, store)
 }
 
-async fn create_hierarchy(manager: &mut Manager) {
+async fn create_hierarchy<T>(manager: &mut Manager<T>) {
     // Adding the root to the file store.
     manager.create_root().await.unwrap();
 
@@ -112,7 +113,7 @@ async fn create_hierarchy(manager: &mut Manager) {
 async fn basic_manager() {
     let (config, store) = prepare_test(1).await;
 
-    let manager = Manager::new(config, Box::new(store)).await;
+    let manager = Manager::<()>::new(config, Box::new(store)).await;
     assert!(manager.is_ok(), "Failed to create a manager");
     let mut manager = manager.unwrap();
 
@@ -172,7 +173,7 @@ async fn rehydrate_single() {
         .await
         .unwrap();
 
-    let mut manager = Manager::new(config, Box::new(store)).await.unwrap();
+    let mut manager = Manager::<()>::new(config, Box::new(store)).await.unwrap();
 
     assert_eq!(manager.has_object(&meta.id()).await.unwrap(), false);
 
@@ -195,7 +196,7 @@ async fn check_constraints() {
         vec![],
     );
 
-    let mut manager = Manager::new(config, Box::new(store)).await.unwrap();
+    let mut manager = Manager::<()>::new(config, Box::new(store)).await.unwrap();
 
     // Fail to store an object where both id and parent are 1
     let res = manager
@@ -256,7 +257,7 @@ async fn check_constraints() {
 async fn delete_hierarchy() {
     let (config, store) = prepare_test(4).await;
 
-    let mut manager = Manager::new(config, Box::new(store)).await.unwrap();
+    let mut manager = Manager::<()>::new(config, Box::new(store)).await.unwrap();
 
     create_hierarchy(&mut manager).await;
 
@@ -279,7 +280,7 @@ async fn delete_hierarchy() {
 async fn rehydrate_full() {
     let (config, store) = prepare_test(5).await;
 
-    let mut manager = Manager::new(config, Box::new(store)).await.unwrap();
+    let mut manager = Manager::<()>::new(config, Box::new(store)).await.unwrap();
 
     create_hierarchy(&mut manager).await;
 
@@ -302,7 +303,7 @@ async fn rehydrate_full() {
 async fn get_full_path() {
     let (config, store) = prepare_test(6).await;
 
-    let mut manager = Manager::new(config, Box::new(store)).await.unwrap();
+    let mut manager = Manager::<()>::new(config, Box::new(store)).await.unwrap();
 
     create_hierarchy(&mut manager).await;
 
@@ -322,7 +323,7 @@ async fn get_full_path() {
 async fn search_by_name() {
     let (config, store) = prepare_test(7).await;
 
-    let mut manager = Manager::new(config, Box::new(store)).await.unwrap();
+    let mut manager = Manager::<()>::new(config, Box::new(store)).await.unwrap();
 
     create_hierarchy(&mut manager).await;
 
@@ -348,7 +349,7 @@ async fn search_by_name() {
 async fn search_by_tag() {
     let (config, store) = prepare_test(8).await;
 
-    let mut manager = Manager::new(config, Box::new(store)).await.unwrap();
+    let mut manager = Manager::<()>::new(config, Box::new(store)).await.unwrap();
 
     create_hierarchy(&mut manager).await;
 
@@ -364,7 +365,7 @@ async fn search_by_tag() {
 async fn search_by_text() {
     let (config, store) = prepare_test(9).await;
 
-    let mut manager = Manager::new(config, Box::new(store)).await.unwrap();
+    let mut manager = Manager::<()>::new(config, Box::new(store)).await.unwrap();
 
     create_hierarchy(&mut manager).await;
 
@@ -391,7 +392,7 @@ async fn search_by_text() {
 async fn score() {
     let (config, store) = prepare_test(10).await;
 
-    let mut manager = Manager::new(config, Box::new(store)).await.unwrap();
+    let mut manager = Manager::<()>::new(config, Box::new(store)).await.unwrap();
     manager.create_root().await.unwrap();
 
     let root_meta = manager.get_metadata(&ROOT_ID).await.unwrap();
@@ -421,7 +422,7 @@ async fn score() {
 async fn top_frecency() {
     let (config, store) = prepare_test(11).await;
 
-    let mut manager = Manager::new(config, Box::new(store)).await.unwrap();
+    let mut manager = Manager::<()>::new(config, Box::new(store)).await.unwrap();
 
     create_hierarchy(&mut manager).await;
 
@@ -448,7 +449,7 @@ async fn top_frecency() {
 async fn index_places() {
     let (config, store) = prepare_test(12).await;
 
-    let mut manager = Manager::new(config, Box::new(store)).await.unwrap();
+    let mut manager = Manager::<()>::new(config, Box::new(store)).await.unwrap();
     manager.add_indexer(Box::new(create_places_indexer()));
 
     manager.create_root().await.unwrap();
@@ -536,7 +537,7 @@ async fn index_places() {
 async fn index_contacts() {
     let (config, store) = prepare_test(13).await;
 
-    let mut manager = Manager::new(config, Box::new(store)).await.unwrap();
+    let mut manager = Manager::<()>::new(config, Box::new(store)).await.unwrap();
     manager.add_indexer(Box::new(create_contacts_indexer()));
 
     manager.create_root().await.unwrap();
@@ -598,7 +599,7 @@ async fn index_contacts() {
 async fn get_root_children() {
     let (config, store) = prepare_test(15).await;
 
-    let manager = Manager::new(config, Box::new(store)).await;
+    let manager = Manager::<()>::new(config, Box::new(store)).await;
     assert!(manager.is_ok(), "Failed to create a manager");
     let mut manager = manager.unwrap();
 
@@ -615,7 +616,7 @@ async fn get_root_children() {
 async fn unique_children_names() {
     let (config, store) = prepare_test(16).await;
 
-    let manager = Manager::new(config, Box::new(store)).await;
+    let manager = Manager::<()>::new(config, Box::new(store)).await;
     assert!(manager.is_ok(), "Failed to create a manager");
     let mut manager = manager.unwrap();
 
@@ -641,7 +642,7 @@ async fn unique_children_names() {
 async fn child_by_name() {
     let (config, store) = prepare_test(16).await;
 
-    let manager = Manager::new(config, Box::new(store)).await;
+    let manager = Manager::<()>::new(config, Box::new(store)).await;
     assert!(manager.is_ok(), "Failed to create a manager");
     let mut manager = manager.unwrap();
 
@@ -683,7 +684,7 @@ async fn migration_check() {
     let (_config, store2) = prepare_test(17).await;
 
     {
-        let manager = Manager::new(config.clone(), Box::new(store)).await;
+        let manager = Manager::<()>::new(config.clone(), Box::new(store)).await;
         assert!(manager.is_ok(), "Failed to create first manager");
         let mut manager = manager.unwrap();
 
@@ -693,7 +694,7 @@ async fn migration_check() {
     }
 
     {
-        let manager = Manager::new(config, Box::new(store2)).await;
+        let manager = Manager::<()>::new(config, Box::new(store2)).await;
         assert!(manager.is_ok(), "Failed to create second manager");
         let manager = manager.unwrap();
 
@@ -708,7 +709,7 @@ async fn migration_check() {
 async fn frecency_update() {
     let (config, store) = prepare_test(18).await;
 
-    let manager = Manager::new(config.clone(), Box::new(store)).await;
+    let manager = Manager::<()>::new(config.clone(), Box::new(store)).await;
     assert!(manager.is_ok(), "Failed to create first manager");
     let mut manager = manager.unwrap();
 
@@ -729,7 +730,7 @@ async fn frecency_update() {
 async fn index_places_mdn() {
     let (config, store) = prepare_test(19).await;
 
-    let mut manager = Manager::new(config, Box::new(store)).await.unwrap();
+    let mut manager = Manager::<()>::new(config, Box::new(store)).await.unwrap();
     manager.add_indexer(Box::new(create_places_indexer()));
 
     manager.create_root().await.unwrap();
@@ -766,7 +767,7 @@ async fn index_places_mdn() {
 async fn import_from_path() {
     let (config, store) = prepare_test(20).await;
 
-    let mut manager = Manager::new(config, Box::new(store)).await.unwrap();
+    let mut manager = Manager::<()>::new(config, Box::new(store)).await.unwrap();
 
     manager.create_root().await.unwrap();
 
@@ -807,10 +808,151 @@ async fn import_from_path() {
 async fn container_size() {
     let (config, store) = prepare_test(21).await;
 
-    let mut manager = Manager::new(config, Box::new(store)).await.unwrap();
+    let mut manager = Manager::<()>::new(config, Box::new(store)).await.unwrap();
 
     create_hierarchy(&mut manager).await;
 
     let size = manager.container_size(&ROOT_ID).await.unwrap();
     assert_eq!(size, 798);
+}
+
+#[derive(Default)]
+struct Observer {
+    tracker: Rc<Tracker>,
+}
+
+#[derive(Default)]
+struct Tracker {
+    created: usize,
+    modified: usize,
+    deleted: usize,
+}
+
+impl ModificationObserver for Observer {
+    type Inner = Rc<Tracker>;
+
+    fn modified(&mut self, modification: &ResourceModification) {
+        // println!("{:?}", modification);
+        let tracker = Rc::get_mut(&mut self.tracker).unwrap();
+        match modification.kind {
+            ModificationKind::Created => tracker.created += 1,
+            ModificationKind::Modified => tracker.modified += 1,
+            ModificationKind::Deleted => tracker.deleted += 1,
+        }
+    }
+
+    fn get_inner<'a>(&'a mut self) -> &'a mut Self::Inner {
+        &mut self.tracker
+    }
+}
+
+#[async_std::test]
+async fn observers() {
+    let (config, store) = prepare_test(22).await;
+
+    let mut manager = Manager::new(config, Box::new(store)).await.unwrap();
+
+    let observer_id = manager.add_observer(Box::new(Observer::default()));
+
+    manager.create_root().await.unwrap();
+
+    manager.with_observer(observer_id, &mut |observer: &mut Box<
+        dyn ModificationObserver<Inner = Rc<Tracker>>,
+    >| {
+        let tracker = observer.get_inner();
+        assert_eq!(tracker.created, 1);
+        assert_eq!(tracker.modified, 0);
+        assert_eq!(tracker.deleted, 0);
+    });
+
+    // Add a leaf node.
+    // println!("Adding leaf");
+    let mut leaf_meta = ResourceMetadata::new(
+        &1.into(),
+        &ROOT_ID,
+        ResourceKind::Leaf,
+        "A leaf",
+        vec![],
+        vec![],
+    );
+
+    manager.create(&mut leaf_meta, None).await.unwrap();
+    manager.with_observer(observer_id, &mut |observer: &mut Box<
+        dyn ModificationObserver<Inner = Rc<Tracker>>,
+    >| {
+        let tracker = observer.get_inner();
+        assert_eq!(tracker.created, 2);
+        assert_eq!(tracker.modified, 1);
+        assert_eq!(tracker.deleted, 0);
+    });
+
+    // Remove the leaf node.
+    // println!("Removing leaf");
+    manager.delete(&leaf_meta.id()).await.unwrap();
+    manager.with_observer(observer_id, &mut |observer: &mut Box<
+        dyn ModificationObserver<Inner = Rc<Tracker>>,
+    >| {
+        let tracker = observer.get_inner();
+        assert_eq!(tracker.created, 2);
+        assert_eq!(tracker.modified, 2);
+        assert_eq!(tracker.deleted, 1);
+    });
+
+    // Add a new container
+    // println!("Adding container");
+    let mut container_meta = ResourceMetadata::new(
+        &2.into(),
+        &ROOT_ID,
+        ResourceKind::Container,
+        "A container",
+        vec![],
+        vec![],
+    );
+    manager.create(&mut container_meta, None).await.unwrap();
+    manager.with_observer(observer_id, &mut |observer: &mut Box<
+        dyn ModificationObserver<Inner = Rc<Tracker>>,
+    >| {
+        let tracker = observer.get_inner();
+        assert_eq!(tracker.created, 3);
+        assert_eq!(tracker.modified, 3);
+        assert_eq!(tracker.deleted, 1);
+    });
+    // Add the leaf to this container.
+    // println!("Adding leaf to container");
+    let mut leaf_meta = ResourceMetadata::new(
+        &1.into(),
+        &container_meta.id(),
+        ResourceKind::Leaf,
+        "A leaf",
+        vec![],
+        vec![],
+    );
+    manager.create(&mut leaf_meta, None).await.unwrap();
+    manager.with_observer(observer_id, &mut |observer: &mut Box<
+        dyn ModificationObserver<Inner = Rc<Tracker>>,
+    >| {
+        let tracker = observer.get_inner();
+        assert_eq!(tracker.created, 4);
+        assert_eq!(tracker.modified, 4);
+        assert_eq!(tracker.deleted, 1);
+    });
+
+    // Remove the sub container.
+    // println!("Removing sub container");
+    manager.delete(&container_meta.id()).await.unwrap();
+    manager.with_observer(observer_id, &mut |observer: &mut Box<
+        dyn ModificationObserver<Inner = Rc<Tracker>>,
+    >| {
+        let tracker = observer.get_inner();
+        assert_eq!(tracker.created, 4);
+        assert_eq!(tracker.modified, 5);
+        assert_eq!(tracker.deleted, 3);
+    });
+
+    manager.remove_observer(observer_id);
+    manager.with_observer(observer_id, &mut |_observer: &mut Box<
+        dyn ModificationObserver<Inner = Rc<Tracker>>,
+    >| {
+        panic!("This observer should have been removed!");
+    });
 }
