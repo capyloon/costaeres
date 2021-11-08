@@ -5,11 +5,12 @@ use libsqlite3_sys::{
     sqlite3_context, sqlite3_result_int, sqlite3_value, sqlite3_value_blob, sqlite3_value_bytes,
 };
 use serde::{Deserialize, Serialize};
+use speedy::{Readable, Writable};
 use std::os::raw::c_int;
 
 static MAX_VISIT_ENTRIES: usize = 10;
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, Readable, Writable)]
 pub enum VisitPriority {
     #[serde(rename = "N")]
     Normal,
@@ -30,7 +31,7 @@ impl VisitPriority {
     }
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, Readable, Writable)]
 pub struct VisitEntry {
     #[serde(rename = "t")]
     pub timestamp: i64, // Time since EPOCH in nano seconds.
@@ -54,11 +55,12 @@ impl VisitEntry {
     }
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize, Readable, Writable)]
 pub struct Scorer {
     #[serde(rename = "c")]
     all_time_visits: u32, // The total number of visits, which can be greater than the entries we keep.
     #[serde(rename = "e")]
+    #[speedy(length_type = u8)] // u8 is enough since MAX_VISIT_ENTRIES < 255
     entries: Vec<VisitEntry>,
 }
 
@@ -142,20 +144,12 @@ impl Scorer {
         score.frecency()
     }
 
-    pub fn as_bincode(&self) -> Vec<u8> {
-        use bincode::Options;
-
-        let bincode = bincode::options().with_big_endian().with_varint_encoding();
-        bincode.serialize(&self).unwrap()
+    pub fn as_binary(&self) -> Vec<u8> {
+        self.write_to_vec().unwrap()
     }
 
-    pub fn from_bincode(input: &[u8]) -> Self {
-        use bincode::Options;
-
-        let bincode = bincode::options().with_big_endian().with_varint_encoding();
-        bincode
-            .deserialize(input)
-            .expect("Failed to deserialize scorer")
+    pub fn from_binary(input: &[u8]) -> Self {
+        Self::read_from_buffer(&input).expect("Failed to deserialize scorer")
     }
 }
 
@@ -195,7 +189,7 @@ pub unsafe extern "C" fn sqlite_frecency(
     let array = std::slice::from_raw_parts(ptr, len);
 
     // 2. Get a Scorer object and return the frecency.
-    let scorer = Scorer::from_bincode(array);
+    let scorer = Scorer::from_binary(array);
     sqlite3_result_int(ctx, scorer.frecency() as _);
 }
 

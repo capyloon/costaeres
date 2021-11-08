@@ -4,11 +4,14 @@ use async_std::io::{Read, Seek};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use speedy::{Readable, Writable};
 use sqlx::{sqlite::SqliteRow, FromRow, Row, Sqlite, Transaction};
 use std::fmt;
 use thiserror::Error;
 
-#[derive(sqlx::Type, Clone, Debug, Deserialize, Serialize, PartialEq, Eq, Hash)]
+#[derive(
+    sqlx::Type, Clone, Debug, Deserialize, Serialize, PartialEq, Eq, Hash, Readable, Writable,
+)]
 #[sqlx(transparent)]
 pub struct ResourceId(String);
 
@@ -217,12 +220,12 @@ impl ResourceMetadata {
 
     // Returns a bincode representation of the score, suitable to store in the DB.
     pub fn db_scorer(&self) -> Vec<u8> {
-        self.scorer.as_bincode()
+        self.scorer.as_binary()
     }
 
     // Set the scorer using the db serialized representation.
     pub fn set_scorer_from_db(&mut self, serialized: &[u8]) {
-        self.scorer = Scorer::from_bincode(serialized)
+        self.scorer = Scorer::from_binary(serialized)
     }
 
     pub fn created(&self) -> DateTime<Utc> {
@@ -313,8 +316,8 @@ pub enum ResourceStoreError {
     Io(#[from] async_std::io::Error),
     #[error("Invalid Container Id")]
     InvalidContainerId,
-    #[error("Bincode error: {0}")]
-    Bincode(#[from] bincode::Error),
+    #[error("Speedy error: {0}")]
+    Speedy(#[from] speedy::Error),
 }
 
 impl PartialEq for ResourceStoreError {
@@ -328,7 +331,7 @@ impl PartialEq for ResourceStoreError {
             | (Self::Json(_), Self::Json(_))
             | (Self::Io(_), Self::Io(_))
             | (Self::InvalidContainerId, Self::InvalidContainerId)
-            | (Self::Bincode(_), Self::Bincode(_)) => true,
+            | (Self::Speedy(_), Self::Speedy(_)) => true,
             (Self::InvalidVariant(v1), Self::InvalidVariant(v2)) => v1 == v2,
             _ => false,
         }
