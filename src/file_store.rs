@@ -14,6 +14,7 @@ use async_std::{
 };
 use async_trait::async_trait;
 use log::error;
+use speedy::{Readable, Writable};
 
 macro_rules! custom_error {
     ($error:expr) => {
@@ -97,7 +98,7 @@ impl FileStore {
         let mut file = Self::create_file(&meta_path).await?;
         let meta = self
             .transformer
-            .transform_array_to(&serde_json::to_vec(metadata)?);
+            .transform_array_to(&metadata.write_to_vec()?);
         file.write_all(&meta).await?;
         file.sync_all().await?;
 
@@ -199,7 +200,7 @@ impl ResourceStore for FileStore {
         let mut buffer = vec![];
         file.read_to_end(&mut buffer).await?;
         let metadata: ResourceMetadata =
-            serde_json::from_slice(&self.transformer.transform_array_from(&buffer))?;
+            ResourceMetadata::read_from_buffer(&self.transformer.transform_array_from(&buffer))?;
 
         Ok(metadata)
     }
@@ -219,7 +220,7 @@ impl ResourceStore for FileStore {
         let mut buffer = vec![];
         file.read_to_end(&mut buffer).await?;
         let metadata: ResourceMetadata =
-            serde_json::from_slice(&self.transformer.transform_array_from(&buffer))?;
+            ResourceMetadata::read_from_buffer(&self.transformer.transform_array_from(&buffer))?;
 
         let content_path = self.variant_path(id, name);
         let file = File::open(&content_path)

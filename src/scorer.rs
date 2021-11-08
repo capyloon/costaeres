@@ -4,19 +4,15 @@ use chrono::{DateTime, Utc};
 use libsqlite3_sys::{
     sqlite3_context, sqlite3_result_int, sqlite3_value, sqlite3_value_blob, sqlite3_value_bytes,
 };
-use serde::{Deserialize, Serialize};
 use speedy::{Readable, Writable};
 use std::os::raw::c_int;
 
 static MAX_VISIT_ENTRIES: usize = 10;
 
-#[derive(Debug, Clone, Deserialize, Serialize, Readable, Writable)]
+#[derive(Debug, Clone, Readable, Writable)]
 pub enum VisitPriority {
-    #[serde(rename = "N")]
     Normal,
-    #[serde(rename = "H")]
     High,
-    #[serde(rename = "V")]
     VeryHigh,
 }
 
@@ -31,11 +27,9 @@ impl VisitPriority {
     }
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize, Readable, Writable)]
+#[derive(Debug, Clone, Readable, Writable)]
 pub struct VisitEntry {
-    #[serde(rename = "t")]
     pub timestamp: i64, // Time since EPOCH in nano seconds.
-    #[serde(rename = "p")]
     pub priority: VisitPriority,
 }
 
@@ -55,11 +49,9 @@ impl VisitEntry {
     }
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize, Readable, Writable)]
+#[derive(Clone, Debug, Readable, Writable)]
 pub struct Scorer {
-    #[serde(rename = "c")]
     all_time_visits: u32, // The total number of visits, which can be greater than the entries we keep.
-    #[serde(rename = "e")]
     #[speedy(length_type = u8)] // u8 is enough since MAX_VISIT_ENTRIES < 255
     entries: Vec<VisitEntry>,
 }

@@ -187,7 +187,7 @@ impl<T> Manager<T> {
         metadata.update_scorer(visit);
 
         let scorer = metadata.db_scorer();
-        let modified = metadata.modified();
+        let modified = *metadata.modified();
         // We only need to update the scorer, so not doing a full update here.
         sqlx::query!(
             "UPDATE OR REPLACE resources SET scorer = ?, modified = ? WHERE id = ?",
@@ -217,8 +217,8 @@ impl<T> Manager<T> {
         let parent = metadata.parent();
         let kind = metadata.kind();
         let name = metadata.name();
-        let created = metadata.created();
-        let modified = metadata.modified();
+        let created = *metadata.created();
+        let modified = *metadata.modified();
         let scorer = metadata.db_scorer();
         sqlx::query!(
             r#"
@@ -833,8 +833,8 @@ impl<T> Manager<T> {
                     meta.set_variants(variants);
                 }
 
-                meta.set_created(DateTime::<Utc>::from_utc(record.created, Utc));
-                meta.set_modified(DateTime::<Utc>::from_utc(record.modified, Utc));
+                meta.set_created(DateTime::<Utc>::from_utc(record.created, Utc).into());
+                meta.set_modified(DateTime::<Utc>::from_utc(record.modified, Utc).into());
                 meta.set_scorer_from_db(&record.scorer);
 
                 self.update_cache(&meta);
@@ -930,11 +930,13 @@ impl<T> Manager<T> {
             let mut suffix = 0;
             let mut final_name = name.clone();
             loop {
-                let name_ok = self.child_by_name(parent, &final_name).await
-                    == Err(ResourceStoreError::NoSuchResource);
-                if name_ok {
+                if let Err(ResourceStoreError::NoSuchResource) =
+                    self.child_by_name(parent, &final_name).await
+                {
+                    // Target name is not used, this is our choice.
                     break;
                 }
+
                 let aname = format!("{}", name);
                 let ppath = Path::new(&aname);
                 suffix += 1;

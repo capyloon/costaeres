@@ -2,15 +2,14 @@
 use crate::scorer::{Scorer, VisitEntry};
 use async_std::io::{Read, Seek};
 use async_trait::async_trait;
-use chrono::{DateTime, Utc};
-use serde::{Deserialize, Serialize};
-use speedy::{Readable, Writable};
+use chrono::{DateTime, TimeZone, Utc};
+use speedy::{Context, Readable, Reader, Writable, Writer};
 use sqlx::{sqlite::SqliteRow, FromRow, Row, Sqlite, Transaction};
 use std::fmt;
 use thiserror::Error;
 
 #[derive(
-    sqlx::Type, Clone, Debug, Deserialize, Serialize, PartialEq, Eq, Hash, Readable, Writable,
+    sqlx::Type, Clone, Debug, PartialEq, Eq, Hash, Readable, Writable,
 )]
 #[sqlx(transparent)]
 pub struct ResourceId(String);
@@ -66,6 +65,49 @@ impl<'r> FromRow<'r, SqliteRow> for ResourceId {
     }
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub struct DateTimeUtc(DateTime<Utc>);
+
+impl DateTimeUtc {
+    fn now() -> Self {
+        DateTimeUtc(Utc::now())
+    }
+}
+
+impl From<DateTime<Utc>> for DateTimeUtc {
+    fn from(val: DateTime<Utc>) -> Self {
+        Self(val)
+    }
+}
+
+impl std::ops::Deref for DateTimeUtc {
+    type Target = DateTime<Utc>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl<'a, C> Readable<'a, C> for DateTimeUtc
+where
+    C: Context,
+{
+    fn read_from<R: Reader<'a, C>>(reader: &mut R) -> Result<Self, C::Error> {
+        let nanos: i64 = i64::read_from(reader)?;
+        Ok(DateTimeUtc(Utc.timestamp_nanos(nanos)))
+    }
+}
+
+impl<C> Writable<C> for DateTimeUtc
+where
+    C: Context,
+{
+    fn write_to<T: ?Sized + Writer<C>>(&self, writer: &mut T) -> Result<(), C::Error> {
+        let nanos = self.0.timestamp_nanos();
+        nanos.write_to(writer)
+    }
+}
+
 #[derive(sqlx::FromRow, PartialEq, Debug)]
 pub struct IdFrec {
     pub id: ResourceId,
@@ -81,7 +123,7 @@ impl IdFrec {
     }
 }
 
-#[derive(sqlx::Type, Clone, Copy, Debug, Deserialize, Serialize, PartialEq)]
+#[derive(sqlx::Type, Clone, Copy, Debug, PartialEq, Readable, Writable)]
 #[repr(u8)]
 pub enum ResourceKind {
     Container,
@@ -98,7 +140,7 @@ impl From<i64> for ResourceKind {
     }
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+#[derive(Clone, Debug, Readable, Writable, PartialEq)]
 pub struct Variant {
     name: String,
     mime_type: String,
@@ -147,7 +189,7 @@ impl VariantContent {
     }
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+#[derive(Clone, Debug, Readable, Writable, PartialEq)]
 pub struct ResourceMetadata {
     id: ResourceId,
     parent: ResourceId,
@@ -155,8 +197,8 @@ pub struct ResourceMetadata {
     name: String,
     tags: Vec<String>,
     variants: Vec<Variant>,
-    created: DateTime<Utc>,
-    modified: DateTime<Utc>,
+    created: DateTimeUtc,
+    modified: DateTimeUtc,
     scorer: Scorer,
 }
 
@@ -176,8 +218,8 @@ impl ResourceMetadata {
             name: name.into(),
             tags,
             variants,
-            created: Utc::now(),
-            modified: Utc::now(),
+            created: DateTimeUtc::now(),
+            modified: DateTimeUtc::now(),
             scorer: Scorer::default(),
         }
     }
@@ -228,24 +270,24 @@ impl ResourceMetadata {
         self.scorer = Scorer::from_binary(serialized)
     }
 
-    pub fn created(&self) -> DateTime<Utc> {
-        self.created
+    pub fn created(&self) -> DateTimeUtc {
+        self.created.clone()
     }
 
-    pub fn set_created(&mut self, date: DateTime<Utc>) {
+    pub fn set_created(&mut self, date: DateTimeUtc) {
         self.created = date;
     }
 
-    pub fn modified(&self) -> DateTime<Utc> {
-        self.modified
+    pub fn modified(&self) -> DateTimeUtc {
+        self.modified.clone()
     }
 
-    pub fn set_modified(&mut self, date: DateTime<Utc>) {
+    pub fn set_modified(&mut self, date: DateTimeUtc) {
         self.modified = date;
     }
 
     pub fn modify_now(&mut self) {
-        self.modified = Utc::now();
+        self.modified = DateTimeUtc::now();
     }
 
     pub fn tags(&self) -> &Vec<String> {
