@@ -80,6 +80,12 @@ impl From<DateTime<Utc>> for DateTimeUtc {
     }
 }
 
+impl Into<DateTime<Utc>> for DateTimeUtc {
+    fn into(self) -> DateTime<Utc> {
+        self.0.clone()
+    }
+}
+
 impl std::ops::Deref for DateTimeUtc {
     type Target = DateTime<Utc>;
 
