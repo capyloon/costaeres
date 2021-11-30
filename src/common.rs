@@ -14,7 +14,7 @@ use thiserror::Error;
 #[sqlx(transparent)]
 pub struct ResourceId(String);
 
-static ROOT_ID_STR: &str = "9e48b88d-4ab5-496b-ad7f-9ecc685128db";
+pub(crate) static ROOT_ID_STR: &str = "9e48b88d-4ab5-496b-ad7f-9ecc685128db";
 
 impl ResourceId {
     #[allow(clippy::new_without_default)]
@@ -82,7 +82,7 @@ impl From<DateTime<Utc>> for DateTimeUtc {
 
 impl Into<DateTime<Utc>> for DateTimeUtc {
     fn into(self) -> DateTime<Utc> {
-        self.0.clone()
+        self.0
     }
 }
 
@@ -391,8 +391,9 @@ pub trait ReaderTrait: Read + Seek {}
 // Generic implementation.
 impl<T: Seek + Unpin + Read + ?Sized> ReaderTrait for Box<T> {}
 
-// Special case for files.
+// Special case for files and BufReader<File>
 impl ReaderTrait for async_std::fs::File {}
+impl ReaderTrait for async_std::io::BufReader<async_std::fs::File> {}
 
 // Special case for slices.
 impl ReaderTrait for async_std::io::Cursor<&[u8]> {}

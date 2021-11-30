@@ -141,7 +141,7 @@ impl Scorer {
     }
 
     pub fn from_binary(input: &[u8]) -> Self {
-        Self::read_from_buffer(&input).expect("Failed to deserialize scorer")
+        Self::read_from_buffer(input).expect("Failed to deserialize scorer")
     }
 }
 

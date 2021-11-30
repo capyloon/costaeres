@@ -59,7 +59,7 @@ pub trait ModificationObserver {
     type Inner;
 
     fn modified(&mut self, modification: &ResourceModification);
-    fn get_inner<'a>(&'a mut self) -> &'a mut Self::Inner;
+    fn get_inner(&mut self) -> &mut Self::Inner;
 }
 
 pub struct Manager<T> {

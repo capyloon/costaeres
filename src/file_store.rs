@@ -10,6 +10,7 @@ use async_std::{
     fs,
     fs::File,
     io::prelude::WriteExt,
+    io::BufReader,
     path::{Path, PathBuf},
 };
 use async_trait::async_trait;
@@ -227,7 +228,11 @@ impl ResourceStore for FileStore {
             .await
             .map_err(|_| ResourceStoreError::NoSuchResource)?;
 
-        Ok((metadata, self.transformer.transform_from(Box::new(file))))
+        Ok((
+            metadata,
+            self.transformer
+                .transform_from(Box::new(BufReader::new(file))),
+        ))
     }
 
     async fn get_variant(
@@ -241,6 +246,8 @@ impl ResourceStore for FileStore {
             .await
             .map_err(|_| ResourceStoreError::NoSuchResource)?;
 
-        Ok(self.transformer.transform_from(Box::new(file)))
+        Ok(self
+            .transformer
+            .transform_from(Box::new(BufReader::new(file))))
     }
 }
