@@ -187,9 +187,57 @@ impl Fts {
     }
 }
 
+// TODO: maybe switch to https://docs.rs/secular/1.0.1/secular/
+fn remove_diacritics(input: &str) -> String {
+    let v = input.chars();
+    let mut split_string: Vec<String> = Vec::new();
+    for c in v {
+        split_string.push(String::from(c));
+    }
+    split_string
+        .iter()
+        .map(|c| match c.as_ref() {
+            "À" | "Á" | "Â" | "Ã" | "Ä" | "Å" | "Æ" => "A",
+            "Þ" => "B",
+            "Ç" | "Č" => "C",
+            "Ď" | "Ð" => "D",
+            "Ě" | "È" | "É" | "Ê" | "Ë" => "E",
+            "Ƒ" => "F",
+            "Ì" | "Í" | "Î" | "Ï" => "I",
+            "Ň" | "Ñ" => "N",
+            "Ò" | "Ó" | "Ô" | "Õ" | "Ö" | "Ø" => "O",
+            "Ř" => "R",
+            "ß" => "ss",
+            "Š" => "S",
+            "Ť" => "T",
+            "Ů" | "Ù" | "Ú" | "Û" | "Ü" => "U",
+            "Ý" => "Y",
+            "Ž" => "Z",
+
+            "à" | "á" | "â" | "ã" | "ä" | "å" | "æ" => "a",
+            "þ" => "b",
+            "ç" | "č" => "c",
+            "ď" | "ð" => "d",
+            "ě" | "è" | "é" | "ê" | "ë" => "e",
+            "ƒ" => "f",
+            "ì" | "í" | "î" | "ï" => "i",
+            "ñ" | "ň" => "n",
+            "ò" | "ó" | "ô" | "õ" | "ö" | "ø" => "o",
+            "ř" => "r",
+            "š" => "s",
+            "ť" => "t",
+            "ů" | "ù" | "ú" | "û" | "ü" => "u",
+            "ý" | "ÿ" => "y",
+            "ž" => "z",
+
+            _ => c,
+        })
+        .collect()
+}
+
 fn preprocess_text(text: &str) -> Vec<String> {
-    // Turn the text into lowercase and split tokens as whitespace separated.
-    let lowercase = text.to_lowercase();
+    // Turn the text into lowercase, convert to ascii and split tokens as whitespace separated.
+    let lowercase = remove_diacritics(text).to_lowercase();
     let words = lowercase.split_whitespace();
     words.into_iter().map(|s| s.trim().to_owned()).collect()
 }
