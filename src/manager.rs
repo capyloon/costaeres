@@ -117,7 +117,7 @@ impl<T> Manager<T> {
                 ResourceStoreError::Custom(format!("Failed to run migration: {}", err))
             })?;
 
-        let fts = Fts::new(&db_pool, 5);
+        let fts = Fts::new(&db_pool);
         Ok(Manager {
             db_pool,
             store,
@@ -260,7 +260,7 @@ impl<T> Manager<T> {
         }
 
         // Insert the full text search data.
-        let tx2 = self.fts.add_text(&id, &name, tx).await?;
+        let tx2 = self.fts.add_text(&id, "<name>", &name, tx).await?;
 
         self.update_cache(metadata);
 
@@ -380,6 +380,7 @@ impl<T> Manager<T> {
         sqlx::query!("DELETE FROM resources")
             .execute(&mut tx)
             .await?;
+        sqlx::query!("DELETE FROM fts").execute(&mut tx).await?;
         tx.commit().await?;
 
         self.notify_observers(&ROOT_ID, ModificationKind::Deleted);
@@ -633,7 +634,9 @@ impl<T> Manager<T> {
             .execute(&mut tx)
             .await?;
 
-        let mut tx2 = self.create_metadata(&metadata, tx).await?;
+        let tx1 = self.fts.remove_text(id, None, tx).await?;
+
+        let mut tx2 = self.create_metadata(&metadata, tx1).await?;
 
         // Update the children content of the parent if this is not creating the root.
         if !metadata.id().is_root() {
@@ -696,7 +699,11 @@ impl<T> Manager<T> {
         metadata.delete_variant(variant_name);
         self.store.delete_variant(id, variant_name).await?;
 
-        // 4. Perform an update with no variant to keep the metadata up to date.
+        // 4. Remove the fts index for this variant.
+        let tx = self.db_pool.begin().await?;
+        let _ = self.fts.remove_text(id, Some(variant_name), tx).await?;
+
+        // 5. Perform an update with no variant to keep the metadata up to date.
         self.store.update(&metadata, None).await?;
         self.notify_observers(&metadata.id(), ModificationKind::Modified);
         Ok(())
@@ -714,11 +721,14 @@ impl<T> Manager<T> {
             .execute(&mut tx)
             .await?;
 
+        // Remove fts for all variants
+        let mut tx1 = self.fts.remove_text(id, None, tx).await?;
+
         if !is_container {
             self.store.delete(id).await?;
 
-            self.update_container_content(&parent_id, &mut tx).await?;
-            tx.commit().await?;
+            self.update_container_content(&parent_id, &mut tx1).await?;
+            tx1.commit().await?;
             self.notify_observers(id, ModificationKind::Deleted);
             self.notify_observers(&parent_id, ModificationKind::Modified);
             self.evict_from_cache(id);
@@ -762,16 +772,17 @@ impl<T> Manager<T> {
             // Delete the child.
             // The tags will be removed by the delete cascade sql rule.
             sqlx::query!("DELETE FROM resources WHERE id = ?", child)
-                .execute(&mut tx)
+                .execute(&mut tx1)
                 .await?;
             self.store.delete(&child).await?;
+            tx1 = self.fts.remove_text(&child, None, tx1).await?;
             self.notify_observers(&child, ModificationKind::Deleted);
             self.evict_from_cache(&child);
         }
 
         self.store.delete(id).await?;
-        self.update_container_content(&parent_id, &mut tx).await?;
-        tx.commit().await?;
+        self.update_container_content(&parent_id, &mut tx1).await?;
+        tx1.commit().await?;
         self.notify_observers(id, ModificationKind::Deleted);
         self.notify_observers(&parent_id, ModificationKind::Modified);
 

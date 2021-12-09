@@ -273,7 +273,7 @@ mod test {
 
     #[actix_rt::test]
     async fn http_wrong_path() {
-        let data = get_data("./http-test-content").await;
+        let data = get_data("./http-test-content/0").await;
 
         let mut app = create_app!(data);
 
@@ -285,7 +285,7 @@ mod test {
 
     #[actix_rt::test]
     async fn http_wrong_key() {
-        let data = get_data("./http-test-content").await;
+        let data = get_data("./http-test-content/1").await;
 
         {
             let mut keys = data.keys.lock();
@@ -305,7 +305,7 @@ mod test {
 
     #[actix_rt::test]
     async fn http_correct_key() {
-        let data = get_data("./http-test-content/0").await;
+        let data = get_data("./http-test-content/2").await;
 
         {
             let mut keys = data.keys.lock();
@@ -326,7 +326,7 @@ mod test {
 
     #[actix_rt::test]
     async fn http_wrong_resource() {
-        let data = get_data("./http-test-content/1").await;
+        let data = get_data("./http-test-content/3").await;
 
         {
             let mut keys = data.keys.lock();
@@ -348,7 +348,7 @@ mod test {
 
     #[actix_rt::test]
     async fn http_wrong_variant() {
-        let data = get_data("./http-test-content/2").await;
+        let data = get_data("./http-test-content/4").await;
 
         {
             let mut keys = data.keys.lock();
@@ -370,7 +370,7 @@ mod test {
 
     #[actix_rt::test]
     async fn http_mime_and_length() {
-        let data = get_data("./http-test-content/3").await;
+        let data = get_data("./http-test-content/5").await;
 
         {
             let mut keys = data.keys.lock();
@@ -398,7 +398,7 @@ mod test {
 
     #[actix_rt::test]
     async fn directory_content() {
-        let data = get_data("./http-test-content/4").await;
+        let data = get_data("./http-test-content/6").await;
 
         {
             let mut keys = data.keys.lock();

@@ -114,7 +114,7 @@ where
     }
 }
 
-#[derive(sqlx::FromRow, PartialEq, Debug)]
+#[derive(sqlx::FromRow, Clone, PartialEq, Debug)]
 pub struct IdFrec {
     pub id: ResourceId,
     pub frecency: u32,

@@ -381,9 +381,6 @@ async fn search_by_text() {
     let results = manager.by_text("child #27", None).await.unwrap();
     assert_eq!(results.len(), 1);
 
-    let results = manager.by_text("child #27 #27", None).await.unwrap();
-    assert_eq!(results.len(), 1);
-
     let results = manager.by_text("child #17", None).await.unwrap();
     assert_eq!(results.len(), 0);
 }
