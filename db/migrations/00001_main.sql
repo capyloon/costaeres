@@ -32,4 +32,4 @@ CREATE TABLE IF NOT EXISTS variants
 
 CREATE INDEX IF NOT EXISTS idx_tag_name ON tags(tag);
 
-CREATE VIRTUAL TABLE fts USING fts5(id UNINDEXED, variant UNINDEXED, content, tokenize = 'trigram');
+CREATE VIRTUAL TABLE fts USING fts5(id UNINDEXED, variant UNINDEXED, content);
