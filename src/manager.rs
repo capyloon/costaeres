@@ -17,7 +17,7 @@
 /// to preserve the consistency between both sides.
 use crate::common::{
     BoxedReader, IdFrec, ResourceId, ResourceKind, ResourceMetadata, ResourceStore,
-    ResourceStoreError, TransactionResult, Variant, VariantContent, ROOT_ID,
+    ResourceStoreError, TransactionResult, Variant, VariantMetadata, ROOT_ID,
 };
 use crate::config::Config;
 use crate::fts::Fts;
@@ -466,7 +466,7 @@ impl<T> Manager<T> {
             ResourceKind::Container,
             "/",
             vec![],
-            vec![Variant::new("default", "inode/directory", 0)],
+            vec![VariantMetadata::new("default", "inode/directory", 0)],
         );
         self.create(&mut root, None).await
     }
@@ -624,7 +624,7 @@ impl<T> Manager<T> {
     pub async fn update_text_index<'c>(
         &'c self,
         metadata: &'c ResourceMetadata,
-        content: &mut VariantContent,
+        content: &mut Variant,
         mut tx: Transaction<'c, Sqlite>,
     ) -> TransactionResult<'c> {
         if metadata.kind() == ResourceKind::Container {
@@ -649,13 +649,13 @@ impl<T> Manager<T> {
     pub async fn create(
         &mut self,
         metadata: &mut ResourceMetadata,
-        mut content: Option<VariantContent>,
+        mut content: Option<Variant>,
     ) -> Result<(), ResourceStoreError> {
         self.check_container_leaf(&metadata.id(), &metadata.parent())
             .await?;
 
         if let Some(content) = &content {
-            metadata.add_variant(content.0.clone());
+            metadata.add_variant(content.metadata.clone());
         }
 
         // Start a transaction to store the new metadata.
@@ -699,11 +699,11 @@ impl<T> Manager<T> {
     pub async fn update_variant(
         &mut self,
         id: &ResourceId,
-        content: VariantContent,
+        content: Variant,
     ) -> Result<(), ResourceStoreError> {
         let mut metadata = self.get_metadata(id).await?;
 
-        metadata.add_variant(content.0.clone());
+        metadata.add_variant(content.metadata.clone());
         metadata.modify_now();
 
         let mut tx = self.db_pool.begin().await?;
@@ -734,7 +734,7 @@ impl<T> Manager<T> {
                     tx3 = self
                         .update_text_index(
                             &metadata,
-                            &mut VariantContent::new(variant.clone(), content),
+                            &mut Variant::new(variant.clone(), content),
                             tx3,
                         )
                         .await?;
@@ -927,12 +927,12 @@ impl<T> Manager<T> {
                 }
 
                 // Get the variants if any.
-                let variants: Vec<Variant> =
+                let variants: Vec<VariantMetadata> =
                     sqlx::query!("SELECT name, mimeType, size FROM variants WHERE id = ?", id)
                         .fetch_all(&self.db_pool)
                         .await?
                         .iter()
-                        .map(|r| Variant::new(&r.name, &r.mimeType, r.size as _))
+                        .map(|r| VariantMetadata::new(&r.name, &r.mimeType, r.size as _))
                         .collect();
 
                 if !variants.is_empty() {
@@ -1062,7 +1062,7 @@ impl<T> Manager<T> {
                 final_name = std::borrow::Cow::from(new_name);
             }
 
-            let variant = Variant::new("default", &mime_type, fs_meta.len() as _);
+            let variant = VariantMetadata::new("default", &mime_type, fs_meta.len() as _);
             let mut meta = ResourceMetadata::new(
                 &ResourceId::new(),
                 parent,
@@ -1074,7 +1074,7 @@ impl<T> Manager<T> {
 
             self.create(
                 &mut meta,
-                Some(VariantContent::new(variant, Box::new(file))),
+                Some(Variant::new(variant, Box::new(file))),
             )
             .await?;
 
@@ -1158,7 +1158,7 @@ impl<T> Manager<T> {
                 .get_variant(&source_meta.id(), &variant.name())
                 .await?;
 
-            let content = VariantContent::new(variant.clone(), item);
+            let content = Variant::new(variant.clone(), item);
             self.update_variant(&new_meta.id(), content).await?;
         }
 
