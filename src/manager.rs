@@ -25,6 +25,8 @@ use crate::indexer::Indexer;
 use crate::scorer::sqlite_frecency;
 use crate::scorer::VisitEntry;
 use crate::timer::Timer;
+use crate::transformers::*;
+use async_recursion::async_recursion;
 use async_std::path::Path;
 use chrono::{DateTime, Utc};
 use libsqlite3_sys::{
@@ -80,6 +82,7 @@ pub struct Manager<T> {
     store: Box<dyn ResourceStore + Send + Sync>,
     fts: Fts,
     indexers: Vec<Box<dyn Indexer + Send + Sync>>, // The list of indexers available.
+    transformers: Vec<Box<dyn VariantTransformer + Send + Sync>>, // The list of variant transformers available.
     cache: LruCache<ResourceId, ResourceMetadata>, // Cache frequently accessed metadata.
     observers: HashMap<usize, Box<dyn ModificationObserver<Inner = T>>>,
     current_observer: usize,
@@ -144,6 +147,7 @@ impl<T> Manager<T> {
                 NonZeroUsize::new(config.metadata_cache_capacity)
                     .unwrap_or(unsafe { NonZeroUsize::new_unchecked(128) }),
             ),
+            transformers: Vec::new(),
             observers: HashMap::new(),
             current_observer: 0,
         })
@@ -329,11 +333,134 @@ impl<T> Manager<T> {
         }
 
         // Insert the full text search data.
-        let tx2 = self.fts.add_text(&id, "<name>", &name, tx).await?;
+        self.fts.add_text(&id, "<name>", &name, &mut tx).await?;
 
         self.update_cache(metadata);
 
-        Ok(tx2)
+        Ok(tx)
+    }
+
+    async fn delete_resource_tags<'c, E: sqlx::Executor<'c, Database = Sqlite>>(
+        &mut self,
+        metadata: &ResourceMetadata,
+        executor: E,
+    ) -> Result<(), ResourceStoreError> {
+        let id =  metadata.id();
+        sqlx::query!("DELETE FROM tags where id = ?",id)
+            .execute(executor)
+            .await?;
+        Ok(())
+    }
+
+    async fn update_resource_meta<'c, E: sqlx::Executor<'c, Database = Sqlite>>(
+        &mut self,
+        metadata: &ResourceMetadata,
+        executor: E,
+    ) -> Result<(), ResourceStoreError> {
+        let id = metadata.id();
+        let parent = metadata.parent();
+        let kind = metadata.kind();
+        let name = metadata.name();
+        let created = *metadata.created();
+        let modified = *metadata.modified();
+        let scorer = metadata.db_scorer();
+        sqlx::query!(
+            r#"
+    UPDATE resources SET parent = ?, kind = ?, name = ?, created = ?, modified = ?, scorer = ? WHERE id = ? 
+            "#,
+            parent,
+            kind,
+            name,
+            created,
+            modified,
+            scorer,
+            id,
+        )
+        .execute(executor)
+        .await?;
+
+        Ok(())
+    }
+
+    async fn update_metadata_exec<'c, E: sqlx::Executor<'c, Database = Sqlite>>(
+        &mut self,
+        metadata: &ResourceMetadata,
+        executor: E,
+    ) -> Result<(), ResourceStoreError> {
+        self.update_resource_meta(metadata,executor).await?;
+        self.delete_resource_tags(metadata, executor).await?;
+
+        Ok(())
+    }
+
+    /// Use a existing transation to run the sql commands needed to update a metadata record.
+    async fn update_metadata<'c>(
+        &mut self,
+        metadata: &ResourceMetadata,
+        mut tx: Transaction<'c, Sqlite>,
+    ) -> TransactionResult<'c> {
+        let _timer = Timer::start("update_metadata");
+        let id = metadata.id();
+        let parent = metadata.parent();
+        let kind = metadata.kind();
+        let name = metadata.name();
+        let created = *metadata.created();
+        let modified = *metadata.modified();
+        let scorer = metadata.db_scorer();
+        sqlx::query!(
+            r#"
+    UPDATE resources SET parent = ?, kind = ?, name = ?, created = ?, modified = ?, scorer = ? WHERE id = ? 
+            "#,
+            parent,
+            kind,
+            name,
+            created,
+            modified,
+            scorer,
+            id,
+        )
+        .execute(&mut tx)
+        .await?;
+
+        // Delete old tags.
+        sqlx::query!("DELETE FROM tags where id = ?", id)
+            .execute(&mut tx)
+            .await?;
+        // Insert the tags.
+        for tag in metadata.tags() {
+            sqlx::query!("INSERT INTO tags ( id, tag ) VALUES ( ?1, ?2 )", id, tag)
+                .execute(&mut tx)
+                .await?;
+        }
+
+        // Delete old variants.
+        sqlx::query!("DELETE FROM variants where id = ?", id)
+            .execute(&mut tx)
+            .await?;
+        // Insert variants
+        for variant in metadata.variants() {
+            let name = variant.name();
+            let mime_type = variant.mime_type();
+            let size = variant.size();
+            sqlx::query!(
+                "INSERT INTO variants ( id, name, mimeType, size ) VALUES ( ?1, ?2, ?3, ?4 )",
+                id,
+                name,
+                mime_type,
+                size
+            )
+            .execute(&mut tx)
+            .await?;
+        }
+
+        // Delete old fts text search
+        self.fts.remove_text(&id, Some("<name>"), &mut tx).await?;
+        // Insert the full text search data.
+        self.fts.add_text(&id, "<name>", &name, &mut tx).await?;
+
+        self.update_cache(metadata);
+
+        Ok(tx)
     }
 
     /// Returns `true` if this object id is in the local index.
@@ -689,8 +816,8 @@ impl<T> Manager<T> {
 
     pub async fn update_text_index<'c>(
         &'c self,
-        metadata: &'c ResourceMetadata,
-        content: &mut Variant,
+        metadata: ResourceMetadata,
+        variant: &mut Variant,
         mut tx: Transaction<'c, Sqlite>,
     ) -> TransactionResult<'c> {
         if metadata.kind() == ResourceKind::Container {
@@ -698,7 +825,7 @@ impl<T> Manager<T> {
         }
 
         for indexer in &self.indexers {
-            tx = indexer.index(metadata, content, &self.fts, tx).await?
+            tx = indexer.index(&metadata, variant, &self.fts, tx).await?
         }
 
         Ok(tx)
@@ -708,6 +835,10 @@ impl<T> Manager<T> {
         self.indexers.push(indexer);
     }
 
+    pub fn add_transformer(&mut self, transformer: Box<dyn VariantTransformer + Send + Sync>) {
+        self.transformers.push(transformer);
+    }
+
     pub async fn close(&self) {
         self.db_pool.close().await
     }
@@ -715,41 +846,59 @@ impl<T> Manager<T> {
     pub async fn create(
         &mut self,
         metadata: &mut ResourceMetadata,
-        mut content: Option<Variant>,
+        variant: Option<Variant>,
+    ) -> Result<(), ResourceStoreError> {
+        self.do_create(metadata, variant, true).await
+    }
+
+    pub async fn do_create(
+        &mut self,
+        metadata: &mut ResourceMetadata,
+        mut variant: Option<Variant>,
+        apply_transforms: bool,
     ) -> Result<(), ResourceStoreError> {
         self.check_container_leaf(&metadata.id(), &metadata.parent())
             .await?;
 
-        if let Some(content) = &content {
-            metadata.add_or_update_variant(content.metadata.clone());
+        if let Some(content) = &variant {
+            metadata.add_or_update_variant(&content.metadata);
         }
 
         // Start a transaction to store the new metadata.
         let tx = self.db_pool.begin().await?;
-        let mut tx2 = self.create_metadata(metadata, tx).await?;
+        let mut tx = self.create_metadata(metadata, tx).await?;
 
         // Update the children content of the parent if this is not creating the root.
         if !metadata.id().is_root() {
-            self.update_container_content(&metadata.parent(), &mut tx2)
+            self.update_container_content(&metadata.parent(), &mut tx)
                 .await?;
         }
 
+        if let Some(ref mut content) = variant {
+            if apply_transforms {
+                println!("do_create calling apply_variant_transforms");
+                self.apply_variant_transforms(&metadata, VariantChange::Created(content))
+                    .await?;
+            }
+        }
+
         // If there is content run the text indexer for this mime type.
-        let tx3 = if let Some(ref mut content) = content {
-            self.update_text_index(metadata, content, tx2).await?
+        let tx = if let Some(ref mut content) = variant {
+            self.update_text_index(metadata.clone(), content, tx)
+                .await?
         } else {
-            tx2
+            tx
         };
 
         // Create the store entry, and commit the SQlite transaction in case of success.
-        match self.store.create(metadata, content).await {
+        match self.store.create(metadata, variant).await {
             Ok(_) => {
-                tx3.commit().await?;
+                tx.commit().await?;
                 // Trigger observers once we have committed all changes.
                 let id = metadata.id();
                 let parent = metadata.parent();
                 self.notify_observers(&ResourceModification::Created(id.clone()));
-                if !id.is_root() {
+                if !id.is_root() && apply_transforms {
                     self.notify_observers(&ResourceModification::Modified(parent.clone()));
                     self.notify_observers(&ResourceModification::ChildCreated(ParentChild::new(
                         &parent, &id,
@@ -761,15 +910,130 @@ impl<T> Manager<T> {
         }
     }
 
-    // Add or replace a variant for this resource.
+    // Run the list of variant actions based on the transformation.
+    async fn apply_variant_transforms<'c>(
+        &'c mut self,
+        resource: &ResourceMetadata,
+        mut change: VariantChange<'_>,
+        tx: Transaction<'c, Sqlite>,
+    ) -> TransactionResult<'c> {
+        let mut list = vec![];
+        for transformer in &self.transformers {
+            list.append(&mut transformer.transform_variant(&mut change).await);
+        }
+
+        // TODO: process the list to ensure there are no incompatible transforms,
+        // eg. adding & removing the same variant.
+
+        let txres = {
+            let mut inner = tx;
+            for transform in list {
+                let old_inner = inner;
+                inner = match transform {
+                    TransformationResult::Create(variant) => {
+                        self.add_variant_from_transform(&resource.id(), variant, old_inner)
+                            .await?
+                    }
+                    // TransformationResult::Update(variant) => {
+                    //     println!("apply_variant_transform -> calling do_update_variant");
+                    //     self.do_update_variant(&resource.id(), variant, false)
+                    //         .await?;
+                    // }
+                    TransformationResult::Noop => old_inner,
+                    _ => {
+                        error!("Unsupported variant transformation: {:?}", transform);
+                        old_inner
+                    }
+                }
+            }
+
+            inner
+        };
+
+        Ok(txres)
+    }
+
+    pub async fn add_variants_from_transform<'c>(
+        &'c mut self,
+        id: &ResourceId,
+        variant: Variant,
+        tx: Transaction<'c, Sqlite>,
+    ) -> TransactionResult<'c> {
+        println!("add_variant_from_transform {}", variant.metadata.name());
+        let mut metadata = self.get_metadata(id).await?;
+
+        metadata.add_variant(&variant.metadata);
+        metadata.modify_now();
+
+        println!("add_variant_from_transform transaction created");
+
+        let mut tx = self.update_metadata(&metadata, tx).await?;
+
+        println!("add_variant_from_transform update_metadata done");
+
+        // Update the children content of the parent if this is not creating the root.
+        if !metadata.id().is_root() {
+            self.update_container_content(&metadata.parent(), &mut tx)
+                .await?;
+        }
+
+        println!("add_variant_from_transform update_container_content done");
+
+        let variant_metadata = variant.metadata.clone();
+        match self.store.update(&metadata, Some(variant)).await {
+            Ok(_) => {
+                // Index the new variant.
+                let content = self
+                    .store
+                    .get_variant(&metadata.id(), &variant_metadata.name())
+                    .await?;
+
+                // TODO: run text indexing on the variants created by transformers.
+                let meta2 = metadata.clone();
+                let tx = self
+                    .update_text_index(meta2, &mut Variant::new(variant_metadata, content), tx)
+                    .await?;
+
+                // tx.commit().await?;
+
+                Ok(tx)
+            }
+            Err(err) => Err(err),
+        }
+    }
+
     pub async fn update_variant(
         &mut self,
         id: &ResourceId,
-        content: Variant,
+        variant: Variant,
     ) -> Result<(), ResourceStoreError> {
+        println!("update_variant -> calling do_update_variant");
+        self.do_update_variant(id, variant, true).await
+    }
+
+    // Add or replace a variant for this resource.
+    #[async_recursion(?Send)]
+    pub async fn do_update_variant(
+        &mut self,
+        id: &ResourceId,
+        mut variant: Variant,
+        apply_transforms: bool,
+    ) -> Result<(), ResourceStoreError> {
+        println!(
+            "do_update_variant start apply_transforms={}",
+            apply_transforms
+        );
         let mut metadata = self.get_metadata(id).await?;
 
-        metadata.add_or_update_variant(content.metadata.clone());
+        if apply_transforms {
+            println!("do_update_variant calling apply_variant_transforms");
+            self.apply_variant_transforms(&metadata, VariantChange::Updated(&mut variant))
+                .await?;
+        }
+
+        println!("do_update_variant variant applied");
+
+        metadata.add_or_update_variant(&variant.metadata);
         metadata.modify_now();
 
         let mut tx = self.db_pool.begin().await?;
@@ -777,9 +1041,9 @@ impl<T> Manager<T> {
             .execute(&mut tx)
             .await?;
 
-        let tx1 = self.fts.remove_text(id, None, tx).await?;
+        self.fts.remove_text(id, None, &mut tx).await?;
 
-        let mut tx2 = self.create_metadata(&metadata, tx1).await?;
+        let mut tx2 = self.create_metadata(&metadata, tx).await?;
 
         // Update the children content of the parent if this is not creating the root.
         if !metadata.id().is_root() {
@@ -787,7 +1051,7 @@ impl<T> Manager<T> {
                 .await?;
         }
 
-        match self.store.update(&metadata, Some(content)).await {
+        match self.store.update(&metadata, Some(variant)).await {
             Ok(_) => {
                 log::info!("Updating fts for {:?}", metadata);
                 let mut tx3 = tx2;
@@ -799,7 +1063,7 @@ impl<T> Manager<T> {
                         .await?;
                     tx3 = self
                         .update_text_index(
-                            &metadata,
+                            metadata,
                             &mut Variant::new(variant.clone(), content),
                             tx3,
                         )
@@ -807,15 +1071,19 @@ impl<T> Manager<T> {
                 }
                 tx3.commit().await?;
 
-                let id = metadata.id();
-                let parent = metadata.parent();
-                if !id.is_root() {
-                    self.notify_observers(&ResourceModification::Modified(parent.clone()));
+                // Observer notifications are resource bound, so dispatch then only for the
+                // "final" change, not for each variant transform that could have happened.
+                if apply_transforms {
+                    let id = metadata.id();
+                    let parent = metadata.parent();
+                    if !id.is_root() {
+                        self.notify_observers(&ResourceModification::Modified(parent.clone()));
+                    }
+                    self.notify_observers(&ResourceModification::Modified(id.clone()));
+                    self.notify_observers(&ResourceModification::ChildModified(ParentChild::new(
+                        &parent, &id,
+                    )));
                 }
-                self.notify_observers(&ResourceModification::Modified(id.clone()));
-                self.notify_observers(&ResourceModification::ChildModified(ParentChild::new(
-                    &parent, &id,
-                )));
 
                 Ok(())
             }
@@ -828,16 +1096,37 @@ impl<T> Manager<T> {
         id: &ResourceId,
         variant_name: &str,
     ) -> Result<(), ResourceStoreError> {
+        self.do_delete_variant(id, variant_name, true).await
+    }
+
+    pub async fn do_delete_variant(
+        &mut self,
+        id: &ResourceId,
+        variant_name: &str,
+        apply_transforms: bool,
+    ) -> Result<(), ResourceStoreError> {
         // 1. Get the metadata for this id.
         let mut metadata = self.get_metadata(id).await?;
 
         // 2. Check variant validity
         if !metadata.has_variant(variant_name) {
-            error!("Variant '{}' is not in metadata.", variant_name);
+            error!("Resource {} has no '{}' variant.", id, variant_name);
             return Err(ResourceStoreError::InvalidVariant(variant_name.into()));
         }
 
-        // 3. remove variant from database and store
+        // 3. Apply variant transformers.
+        if apply_transforms {
+            let reader = (self.get_leaf(id, variant_name).await?).1;
+            let mut variant = Variant {
+                metadata: metadata.variant_metadata(variant_name).unwrap().clone(),
+                reader,
+            };
+            println!("do_delete_variant calling apply_variant_transforms");
+            self.apply_variant_transforms(&metadata, VariantChange::Deleted(&mut variant))
+                .await?;
+        }
+
+        // 4. remove variant from database and store
         sqlx::query!(
             "DELETE FROM variants WHERE id = ? AND name = ?",
             id,
@@ -848,18 +1137,22 @@ impl<T> Manager<T> {
         metadata.delete_variant(variant_name);
         self.store.delete_variant(id, variant_name).await?;
 
-        // 4. Remove the fts index for this variant.
-        let tx = self.db_pool.begin().await?;
-        let _ = self.fts.remove_text(id, Some(variant_name), tx).await?;
+        // 5. Remove the fts index for this variant.
+        let mut tx = self.db_pool.begin().await?;
+        self.fts
+            .remove_text(id, Some(variant_name), &mut tx)
+            .await?;
 
-        // 5. Perform an update with no variant to keep the metadata up to date.
+        // 6. Perform an update with no variant to keep the metadata up to date.
         self.store.update(&metadata, None).await?;
-        let id = metadata.id();
-        let parent = metadata.parent();
-        self.notify_observers(&ResourceModification::Modified(id.clone()));
-        self.notify_observers(&ResourceModification::ChildModified(ParentChild::new(
-            &parent, &id,
-        )));
+        if apply_transforms {
+            let id = metadata.id();
+            let parent = metadata.parent();
+            self.notify_observers(&ResourceModification::Modified(id.clone()));
+            self.notify_observers(&ResourceModification::ChildModified(ParentChild::new(
+                &parent, &id,
+            )));
+        }
         Ok(())
     }
 
@@ -876,13 +1169,13 @@ impl<T> Manager<T> {
             .await?;
 
         // Remove fts for all variants
-        let mut tx1 = self.fts.remove_text(id, None, tx).await?;
+        self.fts.remove_text(id, None, &mut tx).await?;
 
         if !is_container {
             self.store.delete(id).await?;
 
-            self.update_container_content(&parent_id, &mut tx1).await?;
-            tx1.commit().await?;
+            self.update_container_content(&parent_id, &mut tx).await?;
+            tx.commit().await?;
             self.notify_observers(&ResourceModification::Deleted(id.clone()));
             self.notify_observers(&ResourceModification::Modified(parent_id.clone()));
             self.notify_observers(&ResourceModification::ChildDeleted(ParentChild::new(
@@ -906,13 +1199,13 @@ impl<T> Manager<T> {
             let mut new_obj = vec![];
 
             for source_id in containers {
-                let children: Vec<ResourceId> = self.children_of(&source_id, &mut tx1).await?;
+                let children: Vec<ResourceId> = self.children_of(&source_id, &mut tx).await?;
 
                 for child in children {
                     // 1. add this child to the final set.
                     to_delete.insert(child.clone());
                     // 2. If it's a container, add it to the list of containers for the next iteration.
-                    if self.is_container_in_tx(&child, &mut tx1).await? {
+                    if self.is_container_in_tx(&child, &mut tx).await? {
                         new_obj.push(child);
                     }
                 }
@@ -930,17 +1223,17 @@ impl<T> Manager<T> {
             // Delete the child.
             // The tags will be removed by the delete cascade sql rule.
             sqlx::query!("DELETE FROM resources WHERE id = ?", child)
-                .execute(&mut tx1)
+                .execute(&mut tx)
                 .await?;
             self.store.delete(&child).await?;
-            tx1 = self.fts.remove_text(&child, None, tx1).await?;
+            self.fts.remove_text(&child, None, &mut tx).await?;
             self.notify_observers(&ResourceModification::Deleted(child.clone()));
             self.evict_from_cache(&child);
         }
 
         self.store.delete(id).await?;
-        self.update_container_content(&parent_id, &mut tx1).await?;
-        tx1.commit().await?;
+        self.update_container_content(&parent_id, &mut tx).await?;
+        tx.commit().await?;
         self.notify_observers(&ResourceModification::Deleted(id.clone()));
         self.notify_observers(&ResourceModification::Modified(parent_id.clone()));
         self.notify_observers(&ResourceModification::ChildDeleted(ParentChild::new(
@@ -1273,14 +1566,14 @@ impl<T> Manager<T> {
         self.create(&mut new_meta, None).await?;
 
         // For each variant, perform an update_variant
-        for variant in source_meta.variants() {
+        for variant_meta in source_meta.variants() {
             let item = self
                 .store
-                .get_variant(&source_meta.id(), &variant.name())
+                .get_variant(&source_meta.id(), &variant_meta.name())
                 .await?;
 
-            let content = Variant::new(variant.clone(), item);
-            self.update_variant(&new_meta.id(), content).await?;
+            let variant = Variant::new(variant_meta.clone(), item);
+            self.update_variant(&new_meta.id(), variant).await?;
         }
 
         Ok(new_meta)

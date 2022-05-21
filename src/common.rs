@@ -190,6 +190,12 @@ pub struct Variant {
     pub reader: BoxedReader,
 }
 
+impl core::fmt::Debug for Variant {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
+        self.metadata.fmt(formatter)
+    }
+}
+
 impl Variant {
     pub fn new(metadata: VariantMetadata, reader: BoxedReader) -> Self {
         Variant { metadata, reader }
@@ -243,6 +249,10 @@ impl ResourceMetadata {
 
     pub fn has_variant(&self, name: &str) -> bool {
         self.variants.iter().any(|item| item.name() == name)
+    }
+
+    pub fn variant_metadata(&self, name: &str) -> Option<&VariantMetadata> {
+        self.variants.iter().find(|item| item.name() == name)
     }
 
     pub fn has_tag(&self, tag: &str) -> bool {
@@ -350,12 +360,12 @@ impl ResourceMetadata {
         self.variants = variants;
     }
 
-    pub fn add_or_update_variant(&mut self, variant: VariantMetadata) {
+    pub fn add_or_update_variant(&mut self, variant: &VariantMetadata) {
         if self.has_variant(&variant.name()) {
             self.delete_variant(&variant.name());
         }
 
-        self.variants.push(variant);
+        self.variants.push(variant.clone());
     }
 
     pub fn delete_variant(&mut self, name: &str) {
@@ -374,13 +384,12 @@ impl ResourceMetadata {
     }
 
     pub fn mime_type_for_variant(&self, variant_name: &str) -> Option<String> {
-        for variant in &self.variants {
+        self.variants.iter().find_map(|variant| {
             if variant.name() == variant_name {
                 return Some(variant.mime_type());
             }
-        }
-
-        None
+            None
+        })
     }
 }
 

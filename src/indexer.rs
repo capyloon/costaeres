@@ -64,14 +64,12 @@ impl Indexer for FlatJsonIndexer {
                 if let Some(func) = &self.custom_fn {
                     if let Some(custom_text) = func($field, $text) {
                         for item in custom_text {
-                            tx = fts
-                                .add_text(&meta.id(), &variant.metadata.name(), &item, tx)
+                            fts.add_text(&meta.id(), &variant.metadata.name(), &item, &mut tx)
                                 .await?;
                         }
                     }
                 } else {
-                    tx = fts
-                        .add_text(&meta.id(), &variant.metadata.name(), $text, tx)
+                    fts.add_text(&meta.id(), &variant.metadata.name(), $text, &mut tx)
                         .await?;
                 }
             };

@@ -1,3 +1,3 @@
 # Stores
-- Check http://persy.rs/
 
+- Check http://persy.rs/

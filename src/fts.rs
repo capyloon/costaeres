@@ -4,9 +4,9 @@
 /// Using a simple SQlite table (ResourceId, ngram) which makes it easy to
 /// manage object removal at the expense of disk space usage and query performance.
 /// TODO: switch to a Key Value store (eg. Sled) instead, or a fts engine like Sonic.
-use crate::common::{IdFrec, ResourceId, ResourceStoreError, TransactionResult};
+use crate::common::{IdFrec, ResourceId, ResourceStoreError};
 use crate::timer::Timer;
-use sqlx::{Sqlite, SqlitePool, Transaction};
+use sqlx::{Sqlite, SqlitePool};
 
 pub struct Fts {
     db_pool: SqlitePool,
@@ -19,32 +19,32 @@ impl Fts {
         }
     }
 
-    pub async fn remove_text<'c>(
+    pub async fn remove_text<'c, E: sqlx::Executor<'c, Database = Sqlite>>(
         &self,
         id: &ResourceId,
         variant: Option<&str>,
-        mut tx: Transaction<'c, Sqlite>,
-    ) -> TransactionResult<'c> {
+        executor: E,
+    ) -> Result<(), ResourceStoreError> {
         if let Some(v) = variant {
             sqlx::query!("DELETE FROM fts WHERE id = ? and variant = ?", id, v)
-                .execute(&mut tx)
+                .execute(executor)
                 .await?;
         } else {
             sqlx::query!("DELETE FROM fts WHERE id = ?", id)
-                .execute(&mut tx)
+                .execute(executor)
                 .await?;
         }
 
-        Ok(tx)
+        Ok(())
     }
 
-    pub async fn add_text<'c>(
+    pub async fn add_text<'c, E: sqlx::Executor<'c, Database = Sqlite>>(
         &self,
         id: &ResourceId,
         variant: &str,
         text: &str,
-        mut tx: Transaction<'c, Sqlite>,
-    ) -> TransactionResult<'c> {
+        executor: E,
+    ) -> Result<(), ResourceStoreError> {
         // Remove diacritics since the trigram tokenizer of SQlite doesn't have this option.
         let content = secular::lower_lay_string(text);
 
@@ -54,10 +54,10 @@ impl Fts {
             variant,
             content
         )
-        .execute(&mut tx)
+        .execute(executor)
         .await?;
 
-        Ok(tx)
+        Ok(())
     }
 
     pub async fn search(

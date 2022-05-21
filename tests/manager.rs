@@ -6,6 +6,7 @@ use costaeres::file_store::FileStore;
 use costaeres::indexer::*;
 use costaeres::manager::*;
 use costaeres::scorer::{VisitEntry, VisitPriority};
+use costaeres::transformers::thumbnailer::Thumbnailer;
 use std::rc::Rc;
 
 fn named_variant(name: &str, mime_type: &str) -> VariantMetadata {
@@ -1439,7 +1440,10 @@ async fn update_variant() {
     manager
         .update_variant(
             &leaf_meta.id(),
-            Variant::new(VariantMetadata::new("default", "text/plain", 13), Box::new(text)),
+            Variant::new(
+                VariantMetadata::new("default", "text/plain", 13),
+                Box::new(text),
+            ),
         )
         .await
         .unwrap();
@@ -1447,4 +1451,41 @@ async fn update_variant() {
     let variant = &meta.variants()[0];
     assert_eq!(variant.mime_type(), "text/plain");
     assert_eq!(variant.size(), 13);
+}
+
+#[async_std::test]
+async fn resource_thumbnail() {
+    let (config, store) = prepare_test(29).await;
+
+    let manager = Manager::<()>::new(config, Box::new(store)).await;
+    assert!(manager.is_ok(), "Failed to create a manager");
+    let mut manager = manager.unwrap();
+
+    manager.add_transformer(Box::new(Thumbnailer::default()));
+
+    manager.create_root().await.unwrap();
+
+    let image = fs::File::open("./test-fixtures/carrie-borden-BkJGgpSY0JA-unsplash.jpg")
+        .await
+        .unwrap();
+
+    let mut leaf_meta = ResourceMetadata::new(
+        &1.into(),
+        &ROOT_ID,
+        ResourceKind::Leaf,
+        "image.jpg",
+        vec![],
+        vec![],
+    );
+
+    manager
+        .create(
+            &mut leaf_meta,
+            Some(Variant::new(
+                named_variant("default", "image/jpeg"),
+                Box::new(image),
+            )),
+        )
+        .await
+        .unwrap();
 }
