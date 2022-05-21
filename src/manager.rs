@@ -1072,11 +1072,8 @@ impl<T> Manager<T> {
                 vec![variant.clone()],
             );
 
-            self.create(
-                &mut meta,
-                Some(Variant::new(variant, Box::new(file))),
-            )
-            .await?;
+            self.create(&mut meta, Some(Variant::new(variant, Box::new(file))))
+                .await?;
 
             if delete_file {
                 async_std::fs::remove_file(path).await?;
