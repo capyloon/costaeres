@@ -100,7 +100,7 @@ impl<T> Manager<T> {
             .clone();
 
         // Register our custom function to evaluate frecency based on the scorer serialized representation.
-        let pool_options = SqlitePoolOptions::new().after_connect(|conn| {
+        let pool_options = SqlitePoolOptions::new().after_connect(|conn, _meta| {
             Box::pin(async move {
                 match conn.lock_handle().await {
                     Ok(mut handle) => {
@@ -1025,7 +1025,7 @@ impl<T> Manager<T> {
         let file = File::open(&path).await?;
         let fs_meta = file.metadata().await?;
 
-        let mime_type = mime_guess::from_path(&*path.as_ref().to_string_lossy())
+        let mime_type = new_mime_guess::from_path(&*path.as_ref().to_string_lossy())
             .first_or_octet_stream()
             .essence_str()
             .to_owned();
