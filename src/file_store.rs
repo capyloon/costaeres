@@ -10,17 +10,44 @@ use async_std::{
     fs,
     fs::File,
     io::prelude::WriteExt,
-    io::BufReader,
+    io::{BufReader, BufWriter},
     path::{Path, PathBuf},
 };
 use async_trait::async_trait;
 use log::error;
 use speedy::{Readable, Writable};
+use std::time::SystemTime;
 
 macro_rules! custom_error {
     ($error:expr) => {
         Err(ResourceStoreError::Custom($error.into()))
     };
+}
+
+pub struct Timer {
+    start: SystemTime,
+    name: String,
+}
+
+impl Timer {
+    pub fn new(name: &str) -> Self {
+        Self {
+            start: SystemTime::now(),
+            name: name.into(),
+        }
+    }
+}
+
+impl Drop for Timer {
+    fn drop(&mut self) {
+        if let Ok(elapsed) = self.start.elapsed() {
+            let millis =
+                elapsed.as_secs() as f64 * 1_000_000.0 + f64::from(elapsed.subsec_micros());
+            error!("TTT {}: {:.2}ms", self.name, millis / 1000.0);
+        } else {
+            error!("Failed to get timing for {}", self.name);
+        }
+    }
 }
 
 pub struct FileStore {
@@ -38,6 +65,7 @@ impl FileStore {
     where
         P: AsRef<Path>,
     {
+        let _timer = Timer::new("FileStore::new");
         // Fail if the root is not an existing directory.
         let file = File::open(&path).await?;
         let meta = file.metadata().await?;
@@ -68,6 +96,8 @@ impl FileStore {
     async fn create_file<P: AsRef<Path>>(path: P) -> Result<File, ResourceStoreError> {
         use std::os::unix::fs::PermissionsExt;
 
+        let _timer = Timer::new("FileStore::create_file");
+
         let file = File::create(&path).await?;
         file.set_permissions(async_std::fs::Permissions::from_mode(0o600))
             .await?;
@@ -81,6 +111,7 @@ impl FileStore {
         content: Option<Variant>,
         create: bool,
     ) -> Result<(), ResourceStoreError> {
+        let _timer = Timer::new("FileStore::create_or_update");
         // 0. TODO: check if we have enough storage available.
 
         let id = metadata.id();
@@ -148,19 +179,28 @@ impl ResourceStore for FileStore {
         id: &ResourceId,
         content: &[u8],
     ) -> Result<(), ResourceStoreError> {
+        let _timer = Timer::new(&format!("FileStore::update_default_variant_from_slice ({})", content.len()));
+
         let content_path = self.variant_path(id, "default");
-        let mut file = Self::create_file(&content_path).await?;
+        let file = Self::create_file(&content_path).await?;
+        let mut writer = BufWriter::new(file);
         futures::io::copy(
             self.transformer.transform_array_to(content).as_slice(),
-            &mut file,
+            &mut writer,
         )
         .await?;
-        file.sync_all().await?;
+        // let file = writer
+        //     .into_inner()
+        //     .await
+        //     .map_err(|_err| ResourceStoreError::Custom("into_inner".to_owned()))?;
+        // file.sync_all().await?;
 
         Ok(())
     }
 
     async fn delete(&self, id: &ResourceId) -> Result<(), ResourceStoreError> {
+        let _timer = Timer::new("FileStore::delete");
+
         // 1. get the metadata in order to know all the possible variants.
         let metadata = self.get_metadata(id).await?;
 
@@ -183,6 +223,8 @@ impl ResourceStore for FileStore {
         id: &ResourceId,
         variant: &str,
     ) -> Result<(), ResourceStoreError> {
+        let _timer = Timer::new("FileStore::delete_variant");
+
         let path = self.variant_path(id, variant);
         if Path::new(&path).exists().await {
             fs::remove_file(&path).await?;
@@ -192,6 +234,7 @@ impl ResourceStore for FileStore {
 
     async fn get_metadata(&self, id: &ResourceId) -> Result<ResourceMetadata, ResourceStoreError> {
         use async_std::io::ReadExt;
+        let _timer = Timer::new("FileStore::get_metadata");
 
         let meta_path = self.metadata_path(id);
 
@@ -212,6 +255,8 @@ impl ResourceStore for FileStore {
         name: &str,
     ) -> Result<(ResourceMetadata, BoxedReader), ResourceStoreError> {
         use async_std::io::ReadExt;
+
+        let _timer = Timer::new("FileStore::get_full");
 
         let meta_path = self.metadata_path(id);
 
@@ -240,6 +285,8 @@ impl ResourceStore for FileStore {
         id: &ResourceId,
         name: &str,
     ) -> Result<BoxedReader, ResourceStoreError> {
+        let _timer = Timer::new("FileStore::get_variant");
+
         let content_path = self.variant_path(id, name);
 
         let file = File::open(&content_path)
