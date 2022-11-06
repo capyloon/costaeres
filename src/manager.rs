@@ -365,6 +365,19 @@ impl<T> Manager<T> {
         Ok(count == 1)
     }
 
+    /// Returns `true` if this object id is in the local index and is a leaf.
+    pub async fn is_leaf(&self, id: &ResourceId) -> Result<bool, ResourceStoreError> {
+        let count = sqlx::query_scalar!(
+            "SELECT count(*) FROM resources WHERE id = ? and kind = ?",
+            id,
+            ResourceKind::Leaf
+        )
+        .fetch_one(&self.db_pool)
+        .await?;
+
+        Ok(count == 1)
+    }
+
     /// Check container <-> leaf constraints
     // container == leaf is only valid for the root (container == 0)
     pub async fn check_container_leaf(
@@ -1112,6 +1125,64 @@ impl<T> Manager<T> {
         }
 
         Ok(current_size)
+    }
+
+    /// Move a resource to a target container
+    pub async fn move_resource(
+        &mut self,
+        source: &ResourceId,
+        target: &ResourceId,
+    ) -> Result<ResourceMetadata, ResourceStoreError> {
+        // Check that the target exists and is a container.
+        if !self.is_container(target).await? {
+            return Err(ResourceStoreError::InvalidContainerId);
+        }
+
+        if !self.is_leaf(source).await? {
+            return Err(ResourceStoreError::InvalidResourceId);
+        }
+
+        self.evict_from_cache(source);
+
+        // Update the source metadata with the new parent id.
+        let source_meta = self.get_metadata(source).await?;
+        let old_parent = source_meta.parent();
+        let new_meta = source_meta.reparent(target);
+
+        let mut tx = self.db_pool.begin().await?;
+
+        sqlx::query!(
+            "UPDATE OR REPLACE resources SET parent = ? WHERE id = ?",
+            target,
+            source
+        )
+        .execute(&mut tx)
+        .await?;
+
+        self.store.update(&new_meta, None).await?;
+
+        // Update old parent's child list.
+        self.update_container_content(&old_parent, &mut tx).await?;
+
+        // Update new parent's child list.
+        self.update_container_content(target, &mut tx).await?;
+
+        tx.commit().await?;
+
+        self.update_cache(&new_meta);
+
+        // Notify observers for these 2 modifications:
+        // 1. ChildDeleted(old_parent, source)
+        // 2. ChildCreated(target, source)
+        self.notify_observers(&ResourceModification::ChildDeleted(ParentChild::new(
+            &old_parent,
+            source,
+        )));
+        self.notify_observers(&ResourceModification::ChildCreated(ParentChild::new(
+            target, source,
+        )));
+
+        Ok(new_meta)
     }
 
     /// Copy a resource to a target container with all its variants.
