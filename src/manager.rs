@@ -365,6 +365,23 @@ impl<T> Manager<T> {
         Ok(count == 1)
     }
 
+    /// Returns `true` if this object id is in the local index and is a container.
+    pub async fn is_container_in_tx<'c, E: sqlx::Executor<'c, Database = Sqlite>>(
+        &self,
+        id: &ResourceId,
+        executor: E,
+    ) -> Result<bool, ResourceStoreError> {
+        let count = sqlx::query_scalar!(
+            "SELECT count(*) FROM resources WHERE id = ? and kind = ?",
+            id,
+            ResourceKind::Container
+        )
+        .fetch_one(executor)
+        .await?;
+
+        Ok(count == 1)
+    }
+
     /// Returns `true` if this object id is in the local index and is a leaf.
     pub async fn is_leaf(&self, id: &ResourceId) -> Result<bool, ResourceStoreError> {
         let count = sqlx::query_scalar!(
@@ -853,13 +870,13 @@ impl<T> Manager<T> {
             let mut new_obj = vec![];
 
             for source_id in containers {
-                let children: Vec<ResourceId> = self.children_of(&source_id, &self.db_pool).await?;
+                let children: Vec<ResourceId> = self.children_of(&source_id, &mut tx1).await?;
 
                 for child in children {
                     // 1. add this child to the final set.
                     to_delete.insert(child.clone());
                     // 2. If it's a container, add it to the list of containers for the next iteration.
-                    if self.is_container(&child).await? {
+                    if self.is_container_in_tx(&child, &mut tx1).await? {
                         new_obj.push(child);
                     }
                 }
