@@ -589,6 +589,20 @@ async fn index_contacts() {
         .await
         .unwrap();
     assert_eq!(results.len(), 1);
+
+    // Starts with "j"
+    let results = manager
+        .by_text("^^^^j", Some("contact".into()))
+        .await
+        .unwrap();
+    assert_eq!(results.len(), 1);
+
+    // Doesn't start with "a"
+    let results = manager
+        .by_text("^^^^a", Some("contact".into()))
+        .await
+        .unwrap();
+    assert_eq!(results.len(), 0);
 }
 
 #[async_std::test]
