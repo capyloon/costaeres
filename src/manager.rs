@@ -132,7 +132,7 @@ impl<T> Manager<T> {
             .run(&db_pool)
             .await
             .map_err(|err| {
-                ResourceStoreError::Custom(format!("Failed to run migration: {}", err))
+                ResourceStoreError::Custom(format!("Failed to run migration: {err}"))
             })?;
 
         let fts = Fts::new(&db_pool);
@@ -1107,7 +1107,7 @@ impl<T> Manager<T> {
                     break;
                 }
 
-                let aname = format!("{}", name);
+                let aname = format!("{name}");
                 let ppath = Path::new(&aname);
                 suffix += 1;
                 let ext = match ppath.extension() {

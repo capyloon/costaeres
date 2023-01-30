@@ -21,17 +21,17 @@ impl XorNameProvider {
     /// Transform a string in a xored + base64 version, safely usable as a file name.
     pub fn transform(&self, what: &str) -> String {
         let xored: Vec<u8> = what.chars().map(|c| (c as u8) ^ self.xor).collect();
-        base64::encode_config(&xored, base64::BCRYPT)
+        base64::encode_config(xored, base64::BCRYPT)
     }
 }
 
 impl ResourceNameProvider for XorNameProvider {
     fn metadata_name(&self, id: &ResourceId) -> String {
-        self.transform(&format!("{}.meta", id))
+        self.transform(&format!("{id}.meta"))
     }
 
     fn variant_name(&self, id: &ResourceId, variant: &str) -> String {
-        self.transform(&format!("{}.{}.content", id, variant))
+        self.transform(&format!("{id}.{variant}.content"))
     }
 }
 
