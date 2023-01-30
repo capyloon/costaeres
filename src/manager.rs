@@ -131,9 +131,7 @@ impl<T> Manager<T> {
         sqlx::migrate!("db/migrations")
             .run(&db_pool)
             .await
-            .map_err(|err| {
-                ResourceStoreError::Custom(format!("Failed to run migration: {err}"))
-            })?;
+            .map_err(|err| ResourceStoreError::Custom(format!("Failed to run migration: {err}")))?;
 
         let fts = Fts::new(&db_pool);
         Ok(Manager {

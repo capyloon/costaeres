@@ -10,7 +10,7 @@ actix-rt = "2.7"
 actix-web = {version = "4.1"}
 async-std = {version = "1.10", features = ["attributes"]}
 async-trait = "0.1"
-base64 = "0.13"
+base64 = "0.21"
 chrono = {version = "0.4", features = ["serde"]}
 futures = "0.3"
 futures-core = "0.3"
