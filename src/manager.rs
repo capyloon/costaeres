@@ -1309,7 +1309,7 @@ impl<T> Manager<T> {
         if let Err(ResourceStoreError::NoSuchResource) =
             self.child_by_name(&current.parent(), name).await
         {
-            current.set_name(&name);
+            current.set_name(name);
             current.modify_now();
 
             self.evict_from_cache(id);
