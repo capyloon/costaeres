@@ -446,6 +446,9 @@ impl ReaderTrait for BufReader<File> {}
 // Special case for slices.
 impl ReaderTrait for std::io::Cursor<&[u8]> {}
 
+// Special case for Vec<u8>.
+impl ReaderTrait for std::io::Cursor<Vec<u8>> {}
+
 pub type BoxedReader = Box<dyn ReaderTrait + Unpin>;
 
 /// Operations needed for a resource store.
