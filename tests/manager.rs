@@ -5,7 +5,7 @@ use costaeres::file_store::FileStore;
 use costaeres::indexer::*;
 use costaeres::manager::*;
 use costaeres::scorer::{VisitEntry, VisitPriority};
-use std::rc::Rc;
+use std::sync::Arc;
 use tokio::fs;
 use tokio::io::AsyncReadExt;
 
@@ -830,7 +830,7 @@ async fn container_size() {
 
 #[derive(Default)]
 struct Observer {
-    tracker: Rc<Tracker>,
+    tracker: Arc<Tracker>,
 }
 
 #[derive(Default)]
@@ -863,11 +863,11 @@ impl Tracker {
 }
 
 impl ModificationObserver for Observer {
-    type Inner = Rc<Tracker>;
+    type Inner = Arc<Tracker>;
 
     fn modified(&mut self, modification: &ResourceModification) {
         // println!("{:?}", modification);
-        let tracker = Rc::get_mut(&mut self.tracker).unwrap();
+        let tracker = Arc::get_mut(&mut self.tracker).unwrap();
         match modification {
             ResourceModification::Created(_) => tracker.created += 1,
             ResourceModification::Modified(_) => tracker.modified += 1,
@@ -894,7 +894,7 @@ async fn observers() {
     manager.create_root().await.unwrap();
 
     manager.with_observer(observer_id, &mut |observer: &mut Box<
-        dyn ModificationObserver<Inner = Rc<Tracker>>,
+        dyn ModificationObserver<Inner = Arc<Tracker>>,
     >| {
         let tracker = observer.get_inner();
         assert_eq!(tracker.created, 1);
@@ -915,7 +915,7 @@ async fn observers() {
 
     manager.create(&mut leaf_meta, None).await.unwrap();
     manager.with_observer(observer_id, &mut |observer: &mut Box<
-        dyn ModificationObserver<Inner = Rc<Tracker>>,
+        dyn ModificationObserver<Inner = Arc<Tracker>>,
     >| {
         let tracker = observer.get_inner();
         assert_eq!(tracker.created, 2);
@@ -927,7 +927,7 @@ async fn observers() {
     // println!("Removing leaf");
     manager.delete(&leaf_meta.id()).await.unwrap();
     manager.with_observer(observer_id, &mut |observer: &mut Box<
-        dyn ModificationObserver<Inner = Rc<Tracker>>,
+        dyn ModificationObserver<Inner = Arc<Tracker>>,
     >| {
         let tracker = observer.get_inner();
         assert_eq!(tracker.created, 2);
@@ -947,7 +947,7 @@ async fn observers() {
     );
     manager.create(&mut container_meta, None).await.unwrap();
     manager.with_observer(observer_id, &mut |observer: &mut Box<
-        dyn ModificationObserver<Inner = Rc<Tracker>>,
+        dyn ModificationObserver<Inner = Arc<Tracker>>,
     >| {
         let tracker = observer.get_inner();
         assert_eq!(tracker.created, 3);
@@ -966,7 +966,7 @@ async fn observers() {
     );
     manager.create(&mut leaf_meta, None).await.unwrap();
     manager.with_observer(observer_id, &mut |observer: &mut Box<
-        dyn ModificationObserver<Inner = Rc<Tracker>>,
+        dyn ModificationObserver<Inner = Arc<Tracker>>,
     >| {
         let tracker = observer.get_inner();
         assert_eq!(tracker.created, 4);
@@ -978,7 +978,7 @@ async fn observers() {
     // println!("Removing sub container");
     manager.delete(&container_meta.id()).await.unwrap();
     manager.with_observer(observer_id, &mut |observer: &mut Box<
-        dyn ModificationObserver<Inner = Rc<Tracker>>,
+        dyn ModificationObserver<Inner = Arc<Tracker>>,
     >| {
         let tracker = observer.get_inner();
         assert_eq!(tracker.created, 4);
@@ -988,7 +988,7 @@ async fn observers() {
 
     manager.remove_observer(observer_id);
     manager.with_observer(observer_id, &mut |_observer: &mut Box<
-        dyn ModificationObserver<Inner = Rc<Tracker>>,
+        dyn ModificationObserver<Inner = Arc<Tracker>>,
     >| {
         panic!("This observer should have been removed!");
     });
@@ -1014,7 +1014,7 @@ async fn add_remove_tags() {
     assert_eq!(meta.tags().len(), 1);
 
     manager.with_observer(observer_id, &mut |observer: &mut Box<
-        dyn ModificationObserver<Inner = Rc<Tracker>>,
+        dyn ModificationObserver<Inner = Arc<Tracker>>,
     >| {
         let tracker = observer.get_inner();
         assert_eq!(tracker.modified, 1);
@@ -1025,7 +1025,7 @@ async fn add_remove_tags() {
     assert_eq!(meta.tags().len(), 1);
 
     manager.with_observer(observer_id, &mut |observer: &mut Box<
-        dyn ModificationObserver<Inner = Rc<Tracker>>,
+        dyn ModificationObserver<Inner = Arc<Tracker>>,
     >| {
         let tracker = observer.get_inner();
         assert_eq!(tracker.modified, 1);
@@ -1036,7 +1036,7 @@ async fn add_remove_tags() {
     assert_eq!(meta.tags().len(), 2);
 
     manager.with_observer(observer_id, &mut |observer: &mut Box<
-        dyn ModificationObserver<Inner = Rc<Tracker>>,
+        dyn ModificationObserver<Inner = Arc<Tracker>>,
     >| {
         let tracker = observer.get_inner();
         assert_eq!(tracker.modified, 2);
@@ -1047,7 +1047,7 @@ async fn add_remove_tags() {
     assert_eq!(meta.tags().len(), 2);
 
     manager.with_observer(observer_id, &mut |observer: &mut Box<
-        dyn ModificationObserver<Inner = Rc<Tracker>>,
+        dyn ModificationObserver<Inner = Arc<Tracker>>,
     >| {
         let tracker = observer.get_inner();
         assert_eq!(tracker.modified, 2);
@@ -1058,7 +1058,7 @@ async fn add_remove_tags() {
     assert_eq!(meta.tags().len(), 1);
 
     manager.with_observer(observer_id, &mut |observer: &mut Box<
-        dyn ModificationObserver<Inner = Rc<Tracker>>,
+        dyn ModificationObserver<Inner = Arc<Tracker>>,
     >| {
         let tracker = observer.get_inner();
         assert_eq!(tracker.modified, 3);
@@ -1077,7 +1077,7 @@ async fn add_remove_tags() {
     assert_eq!(meta.tags(), &vec!["tag2".to_owned()]);
 
     manager.with_observer(observer_id, &mut |observer: &mut Box<
-        dyn ModificationObserver<Inner = Rc<Tracker>>,
+        dyn ModificationObserver<Inner = Arc<Tracker>>,
     >| {
         let tracker = observer.get_inner();
         assert_eq!(tracker.modified, 3);
@@ -1095,7 +1095,7 @@ async fn add_remove_tags() {
     manager.create(&mut leaf_meta, None).await.unwrap();
 
     manager.with_observer(observer_id, &mut |observer: &mut Box<
-        dyn ModificationObserver<Inner = Rc<Tracker>>,
+        dyn ModificationObserver<Inner = Arc<Tracker>>,
     >| {
         let tracker = observer.get_inner();
         assert_eq!(tracker.modified, 4);
@@ -1106,7 +1106,7 @@ async fn add_remove_tags() {
     assert_eq!(meta.tags().len(), 1);
 
     manager.with_observer(observer_id, &mut |observer: &mut Box<
-        dyn ModificationObserver<Inner = Rc<Tracker>>,
+        dyn ModificationObserver<Inner = Arc<Tracker>>,
     >| {
         let tracker = observer.get_inner();
         assert_eq!(tracker.modified, 5);
@@ -1118,7 +1118,7 @@ async fn add_remove_tags() {
     assert_eq!(meta.tags().len(), 0);
 
     manager.with_observer(observer_id, &mut |observer: &mut Box<
-        dyn ModificationObserver<Inner = Rc<Tracker>>,
+        dyn ModificationObserver<Inner = Arc<Tracker>>,
     >| {
         let tracker = observer.get_inner();
         assert_eq!(tracker.modified, 6);
@@ -1219,7 +1219,7 @@ async fn copy_resource() {
     assert_eq!(&content[0..32], "#!/bin/bash\n\nset -x -e\n\nrm build");
 
     manager.with_observer(observer_id, &mut |observer: &mut Box<
-        dyn ModificationObserver<Inner = Rc<Tracker>>,
+        dyn ModificationObserver<Inner = Arc<Tracker>>,
     >| {
         let tracker = observer.get_inner();
         assert_eq!(tracker.created, 1);
@@ -1304,7 +1304,7 @@ async fn move_resource() {
         manager.create_root().await.unwrap();
 
         manager.with_observer(observer_id, &mut |observer: &mut Box<
-            dyn ModificationObserver<Inner = Rc<Tracker>>,
+            dyn ModificationObserver<Inner = Arc<Tracker>>,
         >| {
             let tracker = observer.get_inner();
             tracker.assert(1, 0, 0, 0, 0, 0);
@@ -1361,7 +1361,7 @@ async fn move_resource() {
         // 4 children created: container 1, container 2, leaf, leaf when moved.
         // 1 children deleted when moving the leaf.
         manager.with_observer(observer_id, &mut |observer: &mut Box<
-            dyn ModificationObserver<Inner = Rc<Tracker>>,
+            dyn ModificationObserver<Inner = Arc<Tracker>>,
         >| {
             let tracker = observer.get_inner();
             tracker.assert(4, 3, 0, 4, 0, 1);

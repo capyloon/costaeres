@@ -70,7 +70,7 @@ pub enum ResourceModification {
     ChildDeleted(ParentChild),
 }
 
-pub trait ModificationObserver {
+pub trait ModificationObserver : Send {
     type Inner;
 
     fn modified(&mut self, modification: &ResourceModification);
