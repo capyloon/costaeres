@@ -97,8 +97,7 @@ impl<T> Manager<T> {
             .log_slow_statements(
                 log::LevelFilter::Error,
                 std::time::Duration::from_millis(100),
-            )
-            .clone();
+            );
 
         // Register our custom function to evaluate frecency based on the scorer serialized representation.
         let pool_options = SqlitePoolOptions::new().after_connect(|conn, _meta| {
